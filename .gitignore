@@ -1,0 +1,51 @@
+# Rust
+/target/
+**/target/
+*.pdb
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/vendor/
+/bin/
+/dist/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and local data
+*.log
+/tmp/
+*.wal
+/data/
+
+# Coverage and profiling
+*.prof
+coverage.out
+coverage.html
+*.coverprofile
+
+# k6 / load test artifacts
+load-test/results/
+
+# Docker Compose overrides (local)
+docker-compose.override.yml
+**/docker-compose.override.yml
