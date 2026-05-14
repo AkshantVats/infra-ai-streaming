@@ -136,6 +136,10 @@ cd infra-ai-streaming
 # Linux (Debian/Ubuntu): sudo apt-get install -y cmake pkg-config libssl-dev libsasl2-dev libzstd-dev libcurl4-openssl-dev
 ./scripts/test-ingestion.sh
 # or: cargo test -p ingestion
+# Same tests inside Docker (slower first run; use if you have no local Rust):
+# ./scripts/docker-test-ingestion.sh
+# If Docker exits with 137, the compile was likely OOM-killed — lower jobs:
+# CARGO_BUILD_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 ./scripts/docker-test-ingestion.sh
 # Full stack (when available):
 # docker compose -f deploy/docker-compose.yml up -d
 # cargo run -p ingestion -- …
