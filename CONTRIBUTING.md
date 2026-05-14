@@ -21,7 +21,7 @@ These are **library** tests (config, WAL, rate limit, metrics). They do **not** 
 
 ## Local dependencies (optional)
 
-For Redis, Redpanda, and ClickHouse matching the architecture docs:
+Compose reads `deploy/.env` via `env_file` (paths are relative to `deploy/`), so copy the example file first; it is gitignored after creation.
 
 ```bash
 cp deploy/.env.example deploy/.env
