@@ -18,4 +18,4 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 
 Environment variable names for the future ingestion **binary** match [`deploy/.env.example`](.env.example) and [`ingestion/src/config.rs`](../ingestion/src/config.rs). Do not commit `.env` (gitignored).
 
-`grafana/` and `prometheus/` at repo root are placeholders for future scrape configs and dashboard exports.
+`grafana/` and `prometheus/` under `deploy/` are placeholders for future scrape configs and dashboard exports.

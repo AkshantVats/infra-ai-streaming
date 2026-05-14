@@ -93,9 +93,8 @@ services:
     env_file:
       - .env
     entrypoint: ["/bin/sh", "-c"]
-    command: |
-      until clickhouse-client --host clickhouse --query 'SELECT 1' 2>/dev/null; do sleep 1; done
-      clickhouse-client --host clickhouse --multiquery < /init.sql
+    command:
+      - "until clickhouse-client --host clickhouse --query 'SELECT 1' 2>/dev/null; do sleep 1; done; clickhouse-client --host clickhouse --multiquery < /init.sql"
     restart: "no"
 
 volumes:

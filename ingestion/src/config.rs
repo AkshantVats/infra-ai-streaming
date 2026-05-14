@@ -1,7 +1,7 @@
 //! Environment-backed configuration for the ingestion service.
 //!
 //! Variable names and local-dev placeholders are listed in `deploy/.env.example`
-//! (copy to `deploy/.env` for Docker Compose). Rust defaults in [`Config::from_env`]
+//! (copy to `deploy/.env` for Docker Compose). Rust defaults in `Config::from_env`
 //! match localhost-oriented development only — not production.
 
 use anyhow::Context;

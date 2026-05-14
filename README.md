@@ -133,7 +133,24 @@ Target architecture (see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) for wh
 
 **Prerequisites:** Rust **1.86+** (see [`rust-toolchain.toml`](rust-toolchain.toml); `icu` / `idna` deps require it with current resolver), **cmake** (for `rdkafka` via `cmake-build`), Docker when you run dependencies locally.
 
-**Docs:** [docs/dev-macos.md](docs/dev-macos.md) (macOS setup), [deploy/docker-compose.yml](deploy/docker-compose.yml) + [deploy/.env.example](deploy/.env.example) (Redis, Redpanda, ClickHouse), [CONTRIBUTING.md](CONTRIBUTING.md) (tests, compose, PRs).
+**Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) (clone, toolchain, `cargo test`, Compose, PR expectations).
+
+### Local development (macOS)
+
+See **[docs/dev-macos.md](docs/dev-macos.md)** for Xcode Command Line Tools, Homebrew, `brew install cmake`, rustup, and `cargo test -p ingestion`. Optional: `brew install redis` for future integration tests.
+
+### Local dependencies (Docker)
+
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml) runs **Redis** (6379), **Redpanda** (Kafka API on **9092**, Admin API on **9644**), and **ClickHouse** (HTTP **8123**, native **9000**), with a placeholder DDL in [`deploy/clickhouse/init.sql`](deploy/clickhouse/init.sql).
+
+```bash
+cp deploy/.env.example deploy/.env
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
+```
+
+[`deploy/.env.example`](deploy/.env.example) lists the same `KAFKA_*`, `REDIS_*`, `WAL_DIR`, `HTTP_PORT`, etc. names as [`ingestion/src/config.rs`](ingestion/src/config.rs). **Library tests** (`cargo test -p ingestion`) do **not** require Compose until integration tests are added.
+
+**Resource note:** ClickHouse is the heaviest service in this stack; on laptops with limited RAM, start Redis + Redpanda only if you only need streaming deps.
 
 ```bash
 git clone https://github.com/YOURUSERNAME/infra-ai-streaming.git
@@ -146,14 +163,11 @@ cd infra-ai-streaming
 # ./scripts/docker-test-ingestion.sh
 # If Docker exits with 137, the compile was likely OOM-killed — lower jobs:
 # CARGO_BUILD_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 ./scripts/docker-test-ingestion.sh
-# Local dependencies (Redis, Redpanda, ClickHouse):
-# cp deploy/.env.example deploy/.env
-# docker compose -f deploy/docker-compose.yml up -d
 # cargo run -p ingestion -- …
 # go run ./consumer/cmd/consumer/
 ```
 
-Example ingest (schema will match `DESIGN.md` / `deploy/clickhouse/init.sql` once checked in):
+Example ingest (future HTTP server; schema aligns with `DESIGN.md` / [`deploy/clickhouse/init.sql`](deploy/clickhouse/init.sql)):
 
 ```bash
 curl -sS -X POST http://localhost:8080/ingest \
