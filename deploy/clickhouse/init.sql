@@ -1,6 +1,5 @@
--- Local / first-boot initialization (official clickhouse-server image runs
--- scripts in /docker-entrypoint-initdb.d when the data directory is empty).
-
+-- Applied by the `clickhouse-init` service in `deploy/docker-compose.yml`
+-- (`clickhouse-client --multiquery < /init.sql`). Placeholder MergeTree for local dev.
 CREATE DATABASE IF NOT EXISTS infra_ai;
 
 CREATE TABLE IF NOT EXISTS infra_ai.inference_events
