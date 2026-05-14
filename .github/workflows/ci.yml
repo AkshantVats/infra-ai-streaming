@@ -15,7 +15,9 @@ jobs:
       - name: Install system dependencies (rdkafka / cmake-build)
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config libssl-dev libsasl2-dev libzstd-dev
+          # libcurl4-openssl-dev: librdkafka's cmake build can still compile units
+          # that include curl/curl.h even when WITH_CURL=0 (see rdkafka-sys build).
+          sudo apt-get install -y cmake pkg-config libssl-dev libsasl2-dev libzstd-dev libcurl4-openssl-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:

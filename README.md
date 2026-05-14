@@ -133,6 +133,7 @@ flowchart LR
 git clone https://github.com/YOURUSERNAME/infra-ai-streaming.git
 cd infra-ai-streaming
 # macOS: brew install cmake   (required for rdkafka native build)
+# Linux (Debian/Ubuntu): sudo apt-get install -y cmake pkg-config libssl-dev libsasl2-dev libzstd-dev libcurl4-openssl-dev
 ./scripts/test-ingestion.sh
 # or: cargo test -p ingestion
 # Full stack (when available):
