@@ -20,6 +20,8 @@ Prometheus (and similar pull-based metrics stores) breaks when `model_id × tena
 
 Ingestion is **AP-oriented**: accept and durably record quickly (WAL + Kafka), then make data **eventually consistent** in ClickHouse. The Go consumer batches writes, protects ClickHouse with a circuit breaker, and spills to Redis when the analytical path is degraded. Prometheus scrapes both services; Grafana reads ClickHouse for product dashboards.
 
+→ [Read the full design document](DESIGN.md)
+
 <!-- architecture-diagram-start -->
 
 ```mermaid

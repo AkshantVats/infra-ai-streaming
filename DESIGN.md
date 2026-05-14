@@ -1,94 +1,127 @@
-# DESIGN — infra-ai-streaming
+# infra-ai-streaming — Architecture Design Document
 
-Author perspective: distributed systems background (high-volume TSDB, streaming, IoT-scale ingestion). This document is the contract between intent and implementation: tradeoffs first, components second.
+[![Build](https://img.shields.io/badge/build-pending-lightgrey.svg)](.github/workflows/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.1.0--pre-orange.svg)](#)
+
+| Field | Value |
+|-------|-------|
+| **Author** | Akshant Sharma |
+| **Status** | Draft — Active Development |
+| **Last Updated** | May 2026 |
+| **Version** | 0.1.0 |
+
+**Document purpose.** This file records **architectural decisions and tradeoffs** for infra-ai-streaming—not only what components exist, but **why** they exist. Contributors and reviewers should be able to trace every major choice (CAP boundary, partition keys, backpressure, failure semantics) to a stated rationale. When implementation diverges, either update this document or treat the divergence as a bug.
+
+---
+
+## Table of contents
+
+1. [Problem and goals](#1-problem-and-goals)
+2. [CAP theorem decision — AP over CP for ingestion](#2-cap-theorem-decision--ap-over-cp-for-ingestion)
+3. [Kafka partition strategy — avoiding hot partitions](#3-kafka-partition-strategy--avoiding-hot-partitions)
+4. [Backpressure design — channel-based in Rust](#4-backpressure-design--channel-based-in-rust)
+5. [Failure modes and recovery](#5-failure-modes-and-recovery)
+6. [Horizontal scaling strategy](#6-horizontal-scaling-strategy)
+7. [Consistency model for analytics queries](#7-consistency-model-for-analytics-queries)
 
 ---
 
 ## 1. Problem and goals
 
-**Why Prometheus is the wrong primary store here.** Prometheus indexes time series by label sets. LLM inference telemetry naturally carries dimensions such as `tenant_id`, `model_id`, `deployment`, `region`, and eventually `finetune_version`. The Cartesian product of those labels creates cardinality that exceeds practical `storage.tsdb.retention` and scrape cardinality budgets long before you reach “1M events/min” in a single control plane. Prometheus remains valuable for **pipeline** metrics (lag, batch latency, circuit state) where cardinality is bounded — not as the system of record for raw inference facts.
+**Why standard observability breaks for LLM inference at scale.** Application metrics stacks (Prometheus-style) assume **bounded label cardinality**. Inference telemetry multiplies dimensions—`model_id`, `tenant_id`, `error_type`, deployment, region—into a space that is manageable for **sampling or tracing products**, but painful as **dense time series** at millions of events per minute. Separately, **dollar cost per request** (`cost_usd`, token counts) is a **finance and capacity** signal, not something most APM SKDs treat as a first-class, queryable fact stream. Multi-tenant SaaS additionally needs **isolation**: rate limits, cost rollups, and noisy-neighbor containment **per tenant**, not only a global service graph.
 
-**Why common LLM observability tools are insufficient at this layer.** Tools in the Langfuse / OpenTelemetry-extension / proxy-logging space excel at developer workflows: traces, prompts, experiments. They are not optimized as a **durable, partitioned append log** with **consumer-group replay**, **hot-path isolation**, and **cost accounting** that must survive broker restarts and partial downstream outages without blocking the caller’s inference request for hundreds of milliseconds. This project targets the **infrastructure plane**: accept events cheaply, guarantee durability boundaries, move work asynchronously to ClickHouse.
+**Goals.**
 
-**Goals (engineering targets).**
+- **Throughput:** sustain **1M inference events/minute** at the ingestion boundary with horizontal scale-out.
+- **Latency SLA:** **P99 under 100 ms** server-side for the **ingest acknowledgment path** (durable under the policy in §2 and §4—not “visible in ClickHouse”).
+- **Cardinality:** support **10k+** distinct combinations of high-cardinality dimensions (e.g. `model_id` × `tenant_id` × error class) in the **analytical store** without Prometheus-style series explosion.
+- **Durability:** **at-least-once** from accepted ingest through Kafka to ClickHouse under stated failure modes; duplicates are an explicit data-plane concern (keys, `FINAL`, dedup engines).
 
-- Sustained **1M events/min** ingest with horizontal scaling of stateless Rust services.
-- **P99 < 100 ms** from HTTP receipt to “durable enough to return success” (WAL fsync + enqueue to internal channel / Kafka produce acknowledgment policy — exact boundary documented per phase in `BENCHMARKS.md` once implemented).
-- **Unbounded logical cardinality** for tenant/model dimensions in the analytical store (physical limits = disk + partitioning + pruning), not Prometheus series limits.
-- **At-least-once** delivery to ClickHouse with explicit duplicate handling keys.
-- **Multi-tenant isolation** for rate limiting and cost rollups (`tenant_id` mandatory on every event).
+**Non-goals (v0 / product boundary).**
 
----
-
-## 2. CAP — AP over CP at ingestion
-
-The ingestion API chooses **availability** and **partition tolerance** over **strong consistency** with ClickHouse at the moment of the HTTP response.
-
-**What we give up.** A successful response does not imply the event is queryable in ClickHouse. It implies the event is **durable in the streaming log path** (local WAL + Kafka produce per policy) and will become visible after consumer flush. On crash or duplicate delivery, **the same logical event may appear more than once** in ClickHouse unless deduplicated.
-
-**Why duplicates are acceptable here.** Downstream analytics (cost, latency percentiles) are mostly **idempotent under duplication** if keyed by `event_id` or if ReplacingMergeTree / materialized dedup is applied. Worse than duplicates is **dropping** silently or **blocking** callers on a remote quorum while models are serving live traffic.
-
-**How we bound harm.** Producers attach `event_id` (server-generated if omitted). Consumers write idempotent batches where possible; ClickHouse schema may evolve toward `ReplacingMergeTree(event_id)` if strong dedup becomes a product requirement. The alternative — CP ingestion that waits for ClickHouse commit — pushes tail latency and failure modes into the **user-facing inference path**, which is the wrong place to absorb analytical store slowness.
+- **No storage of raw prompt or completion text** in the hot pipeline—privacy, retention cost, and compliance explode; use a separate consent-scoped system if needed.
+- **No model evaluation / offline scoring** (golden sets, LLM-as-judge pipelines)—this stack is **metering and reliability telemetry**, not an ML experimentation platform.
+- **No replacement for Langfuse-style trace UX**—we may emit OTel, but the core primitive here is **append-only inference events**, not nested span exploration as the primary UI.
 
 ---
 
-## 3. Partition strategy
+## 2. CAP theorem decision — AP over CP for ingestion
 
-**Kafka topic keys.** Naive partitioning on `model_id` creates **hot partitions** (everyone’s traffic piles onto `gpt-4o`). Random keys remove hot spots but **destroy per-tenant locality**, making ordered consumption and some rollups harder.
+**Ingestion chooses Availability + Partition Tolerance over strong Consistency** with respect to the analytical store at HTTP response time.
 
-**Choice: partition by `tenant_id`.** All events for a tenant route to the same partition, preserving **per-tenant ordering** and spreading load across tenants. Large tenants still produce hot partitions; mitigation is **more partitions** and **multiple independent models** writing under sub-tenant IDs if needed (operational convention, not code magic).
+**Rationale.** A **blocked or slow** ingest path sits on the **critical path of production inference** (or its adjacent gateway). Analytics consumers and dashboards can tolerate **eventual consistency**; a user-facing timeout or cascading retry storm is harder to tolerate than a duplicate row or a second of replication lag. We therefore **do not** wait for ClickHouse commit visibility before returning success.
 
-**ClickHouse partitioning.** Partition by calendar date (`toYYYYMMDD(timestamp)`): efficient TTL, partition pruning on dashboard time ranges, and predictable maintenance windows.
+**Where we tighten consistency.** For **dashboard reads** backed by ClickHouse, we target **ReplicatedMergeTree** (or successor family) with **synchronous replication** on the query-relevant replicas where we need **read-your-writes** within a bounded lag—still not CP at the HTTP edge, but **stronger read semantics** in the warehouse tier than at ingest.
 
-**ClickHouse sorting key.** `(tenant_id, model_id, timestamp)` matches the dominant query: **filter tenant**, optionally **filter model**, **range on time**. LowCardinality on high-repeat string fields remains on the table for compression and scan speed once DDL lands.
-
----
-
-## 4. Backpressure
-
-The Rust service uses a **bounded channel** between HTTP handlers and the Kafka produce path. When the channel is full, `try_send` fails and the API returns **503** with **`Retry-After`** rather than accepting memory growth without bound. **Honest overload** beats silent loss.
-
-A separate drain task reads from the channel and calls the Kafka producer so that **TCP backpressure from brokers** does not pin HTTP worker threads indefinitely. WAL persistence policy is **before** acknowledging durability to the client (implementation detail: fsync batching strategy documented in code comments once merged).
+**Concrete failure scenario.** If **Kafka is partitioned** or brokers are unreachable, the ingestion service continues to **accept** traffic **as long as local resources allow**: events are **WAL-persisted** first (see §4), then retried toward Kafka. We prefer **backpressure (429)** or **honest degradation** over silently dropping accepted work.
 
 ---
 
-## 5. Failure modes
+## 3. Kafka partition strategy — avoiding hot partitions
 
-| Failure | Detection | Recovery | Data loss |
-|---------|-----------|----------|-----------|
-| Kafka broker unavailable | Producer error callbacks / metadata refresh failures | WAL retains not-yet-acknowledged records; retry with backoff | None for events already WAL-fsynced under chosen policy |
-| ClickHouse insert timeout or 500 | Context deadline / driver error | Circuit breaker opens; **Redis LIST overflow** stores serialized batches | None while overflow has capacity; if Redis full, consumer blocks or DLQs per policy |
-| Redis unavailable (rate limit) | Ping / command errors at ingest | **Fail open** on rate limit only (documented): prefer accepting traffic with degraded fairness | No event loss; fairness degraded |
-| Redis unavailable (overflow) | Consumer write errors | Circuit stays open; events remain in Kafka until retry | None at consumer group level (lag grows) |
-| Ingest OOM / kill | K8s restart | WAL replay on startup | None for WAL-fsynced events |
-| Consumer crash | Group rebalance | Resume from last committed offset | **At-least-once** duplicates possible without dedup |
+**Naive approach:** partition only by `model_id`. **Wrong:** a popular model (e.g. GPT-4 class) concentrates traffic on **one hot partition**, limiting parallelism and skewing retention.
 
----
+**Our approach:** partition key = **`hash(tenant_id + ":" + model_id) % num_partitions`** (stable string hash; exact function documented with code). **Why include `model_id`:** spreads a **single tenant’s** high-volume model mix across partitions instead of pinning all tenant traffic to one broker partition. **Why tenant is in the key:** preserves **tenant-scoped locality** in expectation—related traffic co-locates enough for sane consumer batching without gifting the whole partition to one global model.
 
-## 6. Scaling
+**Partition count:** start at **32** partitions for the primary topic; **double** (64, 128, …) when sustained produce rate or consumer lag per partition exceeds targets. **Halving** partitions is avoided in production: it requires **expensive re-keying** and risks violating ordering assumptions during migration.
 
-- **Ingestion:** Stateless pods behind a load balancer; **Redis** holds distributed token-bucket state; **WAL is local** — scaling replicas increases aggregate WAL disk need; operations must size PVCs or instance store accordingly.
-- **Consumers:** Scale on **Kafka lag**, not CPU alone. HPA custom metric: `kafka_consumer_lag` (exporter or client gauge).
-- **ClickHouse:** Read replicas for Grafana; writes through batching consumer (and optional ch proxy layer if added later).
+**Consumer groups:** **one consumer group per downstream concern**—e.g. **ClickHouse writer**, **anomaly detector**, **future alerting fan-out**—so each can scale and commit offsets independently without coupling lag profiles.
 
 ---
 
-## 7. ClickHouse schema rationale (preview)
+## 4. Backpressure design — channel-based in Rust
 
-Raw fact table stores the canonical JSON fields (see README / `deploy/clickhouse/init.sql` when added). **LowCardinality(String)** for `tenant_id` and `model_id` where cardinality is high but repetition per partition is large — reduces storage and speeds scans. **Materialized views** compute hourly **cost**, **token totals**, and **latency quantile sketches** (or simple sums + sample tables) so dashboards do not scan raw facts for every panel. **TTL** on raw rows (e.g., 90 days) with long-lived rollups matches cost constraints for high-volume tenants.
+**Shape:** HTTP handler → **bounded** async channel (**default capacity 10,000 events**, not unbounded RAM) → dedicated task(s) → Kafka producer.
+
+**Overload behavior:** when the channel is full, return **HTTP 429** with **`Retry-After`**—do **not** block the runtime indefinitely, and do **not** drop silently after acceptance.
+
+**Ordering with durability:** **WAL append + fsync completes before a successful enqueue** to the bounded channel for batches we promise to accept under the ingest contract. If the channel rejects, the caller may still retry; WAL replay distinguishes **un-acked** work on restart. (Exact “accepted vs durable” HTTP mapping is specified alongside implementation.)
+
+**Why not rely on Kafka’s producer queue alone:** client internal buffers can grow **without explicit application bounds**, hiding memory pressure until OOM. The **Tokio `mpsc`** channel gives a **hard cap** integrated with async cancellation and backpressure signals.
+
+**Tokio `mpsc` vs crossbeam:** handlers run in **async** context; **`tokio::sync::mpsc`** integrates with the runtime **without blocking threads** on `recv`. Crossbeam bounded channels are excellent for **sync** bridges; here the hot path is **async end-to-end**, so Tokio is the default.
 
 ---
 
-## 8. Security and tenancy (non-goals for v0)
+## 5. Failure modes and recovery
 
-Authentication, mTLS, and per-tenant encryption keys are **not** solved in the first milestone beyond **header-based tenant identification** for development. Production hardening belongs in a threat model appendix once the data plane is live.
+| # | Scenario | What happens | Recovery | Data loss guarantee |
+|---|----------|----------------|----------|---------------------|
+| 1 | **Kafka broker dies mid-ingest** | Producer errors; accepted batches may sit in **WAL** and memory buffers | Retry with backoff; WAL **replay** on restart until Kafka ACKs | **No loss** for WAL-fsynced entries under the chosen produce-ack policy |
+| 2 | **ClickHouse write timeout** (slow query / disk pressure) | Go consumer batch insert fails; **circuit breaker** opens; overflow path may buffer in **Redis** | Breaker half-open retries; drain overflow to ClickHouse when healthy | **No loss** while Kafka retains offsets and overflow capacity holds; otherwise **lag**, not silent drop |
+| 3 | **Redis connection lost** (rate limit path) | Rate limiting **fails open** (documented): accept with degraded fairness; log / metric the miss | Reconnect Redis; token buckets refill on next success | **No intentional drop** of events solely because Redis is down |
+| 4 | **Ingestion engine pod OOM-killed** (Kubernetes) | Process terminates; in-flight work may be partial | New pod starts; **WAL replay** resubmits un-acked entries | **At-least-once**; duplicates possible without idempotent consumer |
+| 5 | **Network partition: Go consumer ↔ ClickHouse** | Inserts time out or reset; breaker may open; consumer **stops committing** forward offsets until policy says otherwise | Heal network; retry batches from Kafka; drain overflow | **No loss** from committed offsets; uncommitted work **replays** from Kafka (duplicates possible) |
 
 ---
 
-## 9. Open questions
+## 6. Horizontal scaling strategy
 
-- Exact Kafka **ACK** level (`acks=all` vs latency tradeoff) per environment.
-- Whether **idempotency** is enforced only at consumer or also via ClickHouse engine choice.
-- OTLP exporter backend (Jaeger, Tempo, vendor) for local compose vs prod.
+- **Rust ingestion:** **stateless** behind a load balancer; **shared-nothing**; **each replica has its own WAL** (size PVCs / instance store per pod). Scale out for QPS; Redis coordinates **distributed** rate limits.
+- **Go consumer:** add instances in the **same consumer group** for a partition set; Kafka **rebalances** partitions; scale on **consumer lag**, not CPU alone.
+- **ClickHouse:** **distributed** tables across shards; **shard key = `tenant_id`** for **data locality** on tenant-heavy dashboards (implementation detail: distributed DDL in `deploy/clickhouse/` when checked in).
+- **Redis:** a **single primary** (with replica for read scaling if needed) is acceptable for **token buckets and short TTL keys** at the target rates; if limits become Redis-bound, **Redis Cluster** is the migration path without changing the API contract.
+- **Kubernetes HPA:** scale **ingestion** on **CPU** plus a **custom metric** (e.g. Kafka **producer queue depth** or channel saturation proxy); scale **consumers** primarily on **Kafka consumer lag**.
 
-This document should change as code lands; each significant behavioral change updates **§4–§7** and cross-links `OBSERVABILITY.md` / `CHAOS.md` when those files exist.
+---
+
+## 7. Consistency model for analytics queries
+
+**Warehouse reality:** ClickHouse replication is **eventually consistent** within a small **replication lag** window (typically sub-second under healthy clusters).
+
+**Query semantics:** dashboard queries that must collapse duplicates use **`FINAL`** (or equivalent deduping patterns) on **ReplacingMergeTree**-style tables—**tradeoff:** higher read cost for **correct single-row** semantics per logical key.
+
+**Pre-aggregation:** **materialized views** roll up raw facts by **`(tenant_id, model_id, hour)`** for cost and latency panels—dashboards hit the **MV** for default views, not full raw scans.
+
+**Why not Kafka Streams / Flink here:** this product’s first milestone is **durable capture + warehouse analytics + operable SRE metrics**. A stream processor cluster adds **operational surface** (state stores, checkpoints, version upgrades) disproportionate to v0 needs; **Go batch consumer + ClickHouse MVs** keeps the blast radius smaller while we prove throughput and cost correctness.
+
+---
+
+## Appendix — Open items
+
+- Exact **Kafka `acks`** default per environment (latency vs durability).
+- Whether **HTTP 429** vs **503** is exposed for all overload classes (document here once frozen with code).
+- OTLP backend choice for local vs production.
+
+This appendix is **not** part of the seven core sections; it tracks decisions still in flight.
