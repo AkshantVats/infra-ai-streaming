@@ -2,6 +2,8 @@
 
 **Sub-100ms AI inference observability at 1M events/min — Kafka-backed, ClickHouse-native, multi-tenant.**
 
+**Honest status:** the repo ships a tested **Rust ingestion library**, CI, design docs, and a **local Docker dependency stack** (Redis, Redpanda, ClickHouse). There is **no runnable HTTP server binary**, **no Kafka producer wiring**, and **no Go consumer source** in-tree yet. Details: [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
+
 [![Build](https://img.shields.io/badge/build-pending-lightgrey.svg)](.github/workflows/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0--pre-orange.svg)](#)
@@ -83,6 +85,8 @@ flowchart LR
 
 ## Features
 
+Target architecture (see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) for what exists in code today):
+
 - **Rust (Axum) HTTP ingestion**: batched JSON ingest, schema validation, bounded in-memory backpressure before honest `503`/`Retry-After`.
 - **WAL before Kafka produce**: local durability so a crash after ACK boundaries can be reconciled with replay semantics (at-least-once).
 - **Kafka / Redpanda**: `ai_inference_events` as primary stream; `ai_inference_dlq` for poison or persistently failing batches.
@@ -125,9 +129,11 @@ flowchart LR
 
 ## Getting started
 
-> **Status:** Ingestion **Rust library** (config, Prometheus metrics, WAL writer, Redis rate limiter) builds and tests locally. HTTP `/ingest`, Kafka producer, and Docker Compose stack are **Day 3+**.
+> **Status:** Ingestion **Rust library** (config, Prometheus metrics, WAL writer, Redis rate limiter) builds and tests locally. HTTP `/ingest`, Kafka producer, and the Go consumer are **not implemented in this repo yet**; see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
 
-**Prerequisites:** Rust **1.86+** (see [`rust-toolchain.toml`](rust-toolchain.toml); `icu` / `idna` deps require it with current resolver), **cmake** (for `rdkafka` via `cmake-build`), Docker + Go when you run the full stack.
+**Prerequisites:** Rust **1.86+** (see [`rust-toolchain.toml`](rust-toolchain.toml); `icu` / `idna` deps require it with current resolver), **cmake** (for `rdkafka` via `cmake-build`), Docker when you run dependencies locally.
+
+**Docs:** [docs/dev-macos.md](docs/dev-macos.md) (macOS setup), [deploy/docker-compose.yml](deploy/docker-compose.yml) + [deploy/.env.example](deploy/.env.example) (Redis, Redpanda, ClickHouse), [CONTRIBUTING.md](CONTRIBUTING.md) (tests, compose, PRs).
 
 ```bash
 git clone https://github.com/YOURUSERNAME/infra-ai-streaming.git
@@ -140,7 +146,8 @@ cd infra-ai-streaming
 # ./scripts/docker-test-ingestion.sh
 # If Docker exits with 137, the compile was likely OOM-killed — lower jobs:
 # CARGO_BUILD_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 ./scripts/docker-test-ingestion.sh
-# Full stack (when available):
+# Local dependencies (Redis, Redpanda, ClickHouse):
+# cp deploy/.env.example deploy/.env
 # docker compose -f deploy/docker-compose.yml up -d
 # cargo run -p ingestion -- …
 # go run ./consumer/cmd/consumer/
