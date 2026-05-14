@@ -125,18 +125,18 @@ flowchart LR
 
 ## Getting started
 
-> **Status:** Day 1 — documentation and repository layout only. Runnable stack begins Day 2–3 per the build plan.
+> **Status:** Ingestion **Rust library** (config, Prometheus metrics, WAL writer, Redis rate limiter) builds and tests locally. HTTP `/ingest`, Kafka producer, and Docker Compose stack are **Day 3+**.
 
-**Prerequisites (planned):** Docker + Docker Compose, Rust stable (1.77+), Go 1.22+.
+**Prerequisites:** Rust stable (1.77+), **cmake** (for `rdkafka` via `cmake-build`), Docker + Go when you run the full stack.
 
 ```bash
 git clone https://github.com/YOURUSERNAME/infra-ai-streaming.git
 cd infra-ai-streaming
-# Coming soon:
+cargo test -p ingestion
+# Full stack (when available):
 # docker compose -f deploy/docker-compose.yml up -d
-# cargo run --manifest-path ingestion/Cargo.toml
+# cargo run -p ingestion -- …
 # go run ./consumer/cmd/consumer/
-# Open Grafana at http://localhost:3000 (credentials TBD in compose)
 ```
 
 Example ingest (schema will match `DESIGN.md` / `deploy/clickhouse/init.sql` once checked in):

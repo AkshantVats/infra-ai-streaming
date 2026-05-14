@@ -1,0 +1,3 @@
+[workspace]
+members = ["ingestion"]
+resolver = "2"

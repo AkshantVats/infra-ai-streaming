@@ -1,0 +1,33 @@
+[package]
+name = "ingestion"
+version = "0.1.0"
+edition = "2021"
+description = "HTTP ingestion hot path for infra-ai-streaming"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["json", "http1", "tokio"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace", "timeout", "limit"] }
+tokio = { version = "1", features = ["full"] }
+rdkafka = { version = "0.36", features = ["cmake-build"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+redis = { version = "0.25", features = ["tokio-comp", "script"] }
+prometheus = { version = "0.13", features = ["process"] }
+lazy_static = "1.5"
+opentelemetry = "0.22"
+opentelemetry-otlp = { version = "0.15", features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.22", features = ["rt-tokio"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = "0.23"
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+thiserror = "1"
+bytes = "1"
+
+[dev-dependencies]
+tempfile = "3"
