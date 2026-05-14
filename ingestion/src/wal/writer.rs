@@ -222,7 +222,7 @@ impl WalWriter {
         let dir = self.base_dir.join("acks");
         fs::create_dir_all(&dir).context("create acks dir")?;
         let path = ack_path(&self.base_dir, entry_id);
-        let mut f = OpenOptions::new()
+        let f = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)

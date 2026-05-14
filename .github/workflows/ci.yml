@@ -19,7 +19,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
+          # idna/icu transitive deps require 1.86+ as of 2026 resolver output
+          toolchain: "1.86"
 
       - name: Cargo test (ingestion)
         run: cargo test -p ingestion --verbose

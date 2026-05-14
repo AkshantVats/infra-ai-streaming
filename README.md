@@ -127,7 +127,7 @@ flowchart LR
 
 > **Status:** Ingestion **Rust library** (config, Prometheus metrics, WAL writer, Redis rate limiter) builds and tests locally. HTTP `/ingest`, Kafka producer, and Docker Compose stack are **Day 3+**.
 
-**Prerequisites:** Rust stable (1.77+), **cmake** (for `rdkafka` via `cmake-build`), Docker + Go when you run the full stack.
+**Prerequisites:** Rust **1.86+** (see [`rust-toolchain.toml`](rust-toolchain.toml); `icu` / `idna` deps require it with current resolver), **cmake** (for `rdkafka` via `cmake-build`), Docker + Go when you run the full stack.
 
 ```bash
 git clone https://github.com/YOURUSERNAME/infra-ai-streaming.git
