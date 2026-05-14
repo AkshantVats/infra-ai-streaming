@@ -132,7 +132,9 @@ flowchart LR
 ```bash
 git clone https://github.com/YOURUSERNAME/infra-ai-streaming.git
 cd infra-ai-streaming
-cargo test -p ingestion
+# macOS: brew install cmake   (required for rdkafka native build)
+./scripts/test-ingestion.sh
+# or: cargo test -p ingestion
 # Full stack (when available):
 # docker compose -f deploy/docker-compose.yml up -d
 # cargo run -p ingestion -- …
