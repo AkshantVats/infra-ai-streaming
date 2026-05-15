@@ -2,7 +2,7 @@
 
 **Sub-100ms AI inference observability at 1M events/min — Kafka-backed, ClickHouse-native, multi-tenant.**
 
-**Honest status:** the repo ships a tested **Rust ingestion library**, CI, design docs, and a **local Docker dependency stack** (Redis, Redpanda, ClickHouse). There is **no runnable HTTP server binary**, **no Kafka producer wiring**, and **no Go consumer source** in-tree yet. Details: [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
+**Honest status:** the repo ships a tested **Rust ingestion library** and a **runnable `ingestion` binary** (HTTP `/ingest`, WAL, Kafka/Redpanda producer), CI, design docs, and a **local Docker dependency stack** (Redis, Redpanda, ClickHouse). The **Go consumer** and full warehouse path are **not in-tree yet**. Details: [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
 
 [![Build](https://img.shields.io/badge/build-pending-lightgrey.svg)](.github/workflows/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -85,10 +85,10 @@ flowchart LR
 
 ## Features
 
-Target architecture (see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) for what exists in code today):
+Implemented vs planned (see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md)):
 
-- **Rust (Axum) HTTP ingestion**: batched JSON ingest, schema validation, bounded in-memory backpressure before honest `503`/`Retry-After`.
-- **WAL before Kafka produce**: local durability so a crash after ACK boundaries can be reconciled with replay semantics (at-least-once).
+- **Rust (Axum) HTTP ingestion** *(Day 3)*: `POST /ingest`, schema validation, Redis rate limits, bounded `mpsc` backpressure (`503` + `Retry-After` when the channel is full).
+- **WAL before Kafka produce** *(Day 3)*: segment WAL + fsync before accept; unacked replay on startup; `mark_acked` after broker delivery (at-least-once).
 - **Kafka / Redpanda**: `ai_inference_events` as primary stream; `ai_inference_dlq` for poison or persistently failing batches.
 - **Go stream consumer**: concurrent read, **1000 events or 500ms** flush policy, ClickHouse batch writer, **circuit breaker** with **Redis LIST overflow** when inserts fail or time out.
 - **Redis**: distributed **token-bucket rate limit per `tenant_id`** on ingest; **overflow buffer** when ClickHouse is slow or unavailable.
@@ -129,7 +129,7 @@ Target architecture (see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) for wh
 
 ## Getting started
 
-> **Status:** Ingestion **Rust library** (config, Prometheus metrics, WAL writer, Redis rate limiter) builds and tests locally. HTTP `/ingest`, Kafka producer, and the Go consumer are **not implemented in this repo yet**; see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
+> **Status:** Ingestion **library + binary** build and test locally (`./scripts/test-ingestion.sh`). For **HTTP → WAL → Kafka**, start Compose (Redis + Redpanda), then `cargo run -p ingestion`. The **Go consumer** is **not in this repo yet**; see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
 
 **Prerequisites:** Rust **1.86+** (see [`rust-toolchain.toml`](rust-toolchain.toml); `icu` / `idna` deps require it with current resolver), **cmake** (for `rdkafka` via `cmake-build`), Docker when you run dependencies locally.
 
@@ -148,7 +148,7 @@ cp deploy/.env.example deploy/.env
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 ```
 
-[`deploy/.env.example`](deploy/.env.example) lists the same `KAFKA_*`, `REDIS_*`, `WAL_DIR`, `HTTP_PORT`, etc. names as [`ingestion/src/config.rs`](ingestion/src/config.rs). **Library tests** (`cargo test -p ingestion`) do **not** require Compose until integration tests are added.
+[`deploy/.env.example`](deploy/.env.example) lists the same `KAFKA_*`, `REDIS_*`, `WAL_DIR`, `HTTP_PORT`, etc. names as [`ingestion/src/config.rs`](ingestion/src/config.rs). **Unit tests** (`cargo test -p ingestion`) do **not** require Compose. **Running the binary** needs Redis and a Kafka-compatible broker—use Compose **Redpanda on `127.0.0.1:9092`** (not a separate native Kafka install on macOS).
 
 **Resource note:** ClickHouse is the heaviest service in this stack; on laptops with limited RAM, start Redis + Redpanda only if you only need streaming deps.
 
@@ -163,11 +163,14 @@ cd infra-ai-streaming
 # ./scripts/docker-test-ingestion.sh
 # If Docker exits with 137, the compile was likely OOM-killed — lower jobs:
 # CARGO_BUILD_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 ./scripts/docker-test-ingestion.sh
-# cargo run -p ingestion -- …
-# go run ./consumer/cmd/consumer/
+
+# E2E (after: cp deploy/.env.example deploy/.env && docker compose … up -d):
+# set -a && source deploy/.env && set +a
+# cargo run -p ingestion
+# go run ./consumer/cmd/consumer/   # not in repo yet
 ```
 
-Example ingest (future HTTP server; schema aligns with `DESIGN.md` / [`deploy/clickhouse/init.sql`](deploy/clickhouse/init.sql)):
+Example ingest (with binary running; schema aligns with `DESIGN.md` / [`deploy/clickhouse/init.sql`](deploy/clickhouse/init.sql)):
 
 ```bash
 curl -sS -X POST http://localhost:8080/ingest \
@@ -208,7 +211,7 @@ Ingest optimizes **availability** and **honest overload behavior**: prefer accep
 
 ```
 infra-ai-streaming/
-├── ingestion/          # Rust — Axum, WAL, Kafka producer, rate limit client
+├── ingestion/          # Rust — Axum binary, WAL, Kafka producer, rate limit client
 ├── consumer/           # Go — Kafka reader, ClickHouse writer, Redis overflow
 ├── deploy/             # docker-compose, Prometheus, Grafana, ClickHouse init
 ├── dashboards/         # Grafana JSON exports

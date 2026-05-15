@@ -7,10 +7,14 @@ description = "HTTP ingestion hot path for infra-ai-streaming"
 [lib]
 path = "src/lib.rs"
 
+[[bin]]
+name = "ingestion"
+path = "src/main.rs"
+
 [dependencies]
 axum = { version = "0.7", features = ["json", "http1", "tokio"] }
-tower = "0.4"
-tower-http = { version = "0.5", features = ["trace", "timeout", "limit"] }
+tower = { version = "0.4", features = ["limit", "util"] }
+tower-http = { version = "0.5", features = ["trace", "timeout"] }
 tokio = { version = "1", features = ["full"] }
 rdkafka = { version = "0.36", features = ["cmake-build"] }
 serde = { version = "1", features = ["derive"] }

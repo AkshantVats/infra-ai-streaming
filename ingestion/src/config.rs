@@ -21,6 +21,8 @@ pub struct Config {
     pub batch_channel_capacity: usize,
     pub max_batch_size: usize,
     pub max_event_age_ms: u64,
+    /// Max in-flight HTTP requests (`ConcurrencyLimitLayer`).
+    pub max_concurrent_requests: usize,
 }
 
 fn env_var(key: &str, default: &str) -> anyhow::Result<String> {
@@ -83,6 +85,10 @@ impl Config {
             "MAX_EVENT_AGE_MS",
             &env_var("MAX_EVENT_AGE_MS", "3600000")?,
         )?;
+        let max_concurrent_requests = parse_usize(
+            "MAX_CONCURRENT_REQUESTS",
+            &env_var("MAX_CONCURRENT_REQUESTS", "1000")?,
+        )?;
 
         Ok(Self {
             kafka_brokers,
@@ -96,6 +102,7 @@ impl Config {
             batch_channel_capacity,
             max_batch_size,
             max_event_age_ms,
+            max_concurrent_requests,
         })
     }
 }

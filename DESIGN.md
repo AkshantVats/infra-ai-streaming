@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | **Author** | Akshant Sharma |
-| **Status** | Draft — Active Development |
+| **Status** | Draft — Active Development (ingestion HTTP + WAL + Kafka path implemented in `ingestion/`) |
 | **Last Updated** | May 2026 |
 | **Version** | 0.1.0 |
 
@@ -118,10 +118,21 @@
 
 ---
 
+## Appendix — Implementation notes (Day 3)
+
+The `ingestion` binary implements §2–§4 at a first milestone:
+
+- **HTTP:** `POST /ingest` returns **202 Accepted** after WAL append + successful enqueue to a bounded `tokio::sync::mpsc` channel; channel full → **503** with `Retry-After`.
+- **WAL:** Segment files under `WAL_DIR`; `replay_unacked` on startup; `mark_acked` after Kafka delivery confirmation.
+- **Kafka:** **rdkafka** producer to `KAFKA_TOPIC`; failed batches after retries go to `KAFKA_DLQ_TOPIC`. Local dev uses **Redpanda** in Docker Compose (`127.0.0.1:9092`)—Kafka-compatible API, not a host-native Kafka install.
+- **Rate limit:** Redis token bucket per `tenant_id` (and `X-Tenant-ID` header); fail-open on Redis errors per §5.
+
+**Still out of scope in-tree:** Go consumer, ClickHouse writer, Redis overflow drain, Helm charts.
+
 ## Appendix — Open items
 
 - Exact **Kafka `acks`** default per environment (latency vs durability).
-- Whether **HTTP 429** vs **503** is exposed for all overload classes (document here once frozen with code).
+- Whether **HTTP 429** vs **503** is exposed for all overload classes (backpressure currently uses **503**; document here if that changes).
 - OTLP backend choice for local vs production.
 
 This appendix is **not** part of the seven core sections; it tracks decisions still in flight.

@@ -1,13 +1,15 @@
-//! Rust ingestion engine: config, metrics, WAL, and distributed rate limiting.
-//!
-//! HTTP server and Kafka producer are wired in a later milestone.
+//! Rust ingestion engine: config, metrics, WAL, rate limiting, and Kafka produce.
 
 pub mod config;
+pub mod handlers;
+pub mod kafka;
 pub mod metrics;
 pub mod rate_limit;
+pub mod server;
 pub mod wal;
 
 pub use config::Config;
+pub use kafka::{KafkaProducer, ProduceMessage};
 pub use metrics::gather_metrics;
 pub use rate_limit::{RateLimitResult, RateLimiter};
 pub use wal::{WalEntry, WalWriter};
