@@ -32,6 +32,15 @@ This document states what exists in the repository today versus what is still de
 | `curl /ingest` → 202 | Requires running ingestion binary |
 | Go consumer stdout with `cost_usd` | Requires running consumer + ingest |
 | Prometheus scrape ingestion `:8080/metrics` | Compose + running ingestion |
+| Grafana dashboard **AI Inference Observability — Local E2E** | Provisioned under `deploy/grafana/provisioning/dashboards/` (uid `ai-inference-e2e-local`) |
+
+## 3-step local demo (HTTP → Kafka → stdout)
+
+1. **Stack:** `cp deploy/.env.example deploy/.env && docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d` — then open Grafana http://localhost:3000 (`admin`/`admin`) → dashboard **AI Inference Observability — Local E2E**.
+2. **Pipeline:** Terminal A — `cd consumer && set -a && source ../deploy/.env && set +a && export KAFKA_BROKERS=127.0.0.1:9092 && go run ./cmd/consumer`. Terminal B — `set -a && source deploy/.env && set +a && cargo run -p ingestion`.
+3. **Proof:** `curl -X POST http://localhost:8080/ingest …` (see root `README.md`); Kafka — `docker compose … exec -T redpanda rpk topic consume ai_inference_events -n 1 -o -1`; consumer stdout — `msg=event_consumed … cost_usd=0.00423`.
+
+Or: `./scripts/smoke-e2e.sh` (compose + tests; ingest if ingestion is already up).
 
 ## How to use this doc
 

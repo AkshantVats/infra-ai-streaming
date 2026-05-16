@@ -42,9 +42,11 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm redp
 ## End-to-end order (Day 4)
 
 1. Compose up (this file).
-2. Terminal A: `go run ./consumer/cmd/consumer` (from repo root; see `consumer/README.md`).
-3. Terminal B: `cargo run -p ingestion`.
+2. Terminal A: `cd consumer && set -a && source ../deploy/.env && set +a && export KAFKA_BROKERS=127.0.0.1:9092 && go run ./cmd/consumer`.
+3. Terminal B: `cargo run -p ingestion` (repo root).
 4. Terminal C: `curl` to `POST http://localhost:8080/ingest` (see root `README.md`).
+
+**Grafana:** http://localhost:3000 — provisioned dashboard **AI Inference Observability — Local E2E** (`uid: ai-inference-e2e-local`). Reload Grafana after adding dashboards: `docker compose … restart grafana`.
 
 Or run [`../scripts/smoke-e2e.sh`](../scripts/smoke-e2e.sh) for a compose + ingest smoke check.
 

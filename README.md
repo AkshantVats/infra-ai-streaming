@@ -172,7 +172,15 @@ cd infra-ai-streaming
 #   set -a && source deploy/.env && set +a && cargo run -p ingestion
 # Terminal C — ingest (or ./scripts/smoke-e2e.sh)
 # Observability: http://localhost:9090/targets  http://localhost:3000 (admin/admin)
+#   Dashboard: "AI Inference Observability — Local E2E" (provisioned; see docs/PROJECT-STATUS.md)
 ```
+
+### 3-step demo (quick)
+
+1. `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
+2. Run **consumer** (`cd consumer && go run ./cmd/consumer`) and **ingestion** (`cargo run -p ingestion`) with `deploy/.env` sourced; `KAFKA_BROKERS=127.0.0.1:9092` for the consumer.
+3. `curl` `/ingest` (example below) → verify Kafka (`rpk topic consume`) and consumer stdout (`cost_usd=0.00423`). Grafana: http://localhost:3000.
+
 
 Example ingest (with binary running; schema aligns with `DESIGN.md` / [`deploy/clickhouse/init.sql`](deploy/clickhouse/init.sql)):
 
