@@ -1,4 +1,5 @@
-# Local dependencies: Redis, Redpanda (Kafka-compatible API), ClickHouse.
+# Local dependencies: Redis, Redpanda (Kafka-compatible API), ClickHouse,
+# Prometheus, Grafana, and one-shot init jobs for topics + DDL.
 #
 #   cp deploy/.env.example deploy/.env
 #
@@ -67,6 +68,20 @@ services:
       retries: 12
       start_period: 30s
 
+  redpanda-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    volumes:
+      - ./redpanda/init-topics.sh:/init-topics.sh:ro
+    entrypoint: ["/bin/sh", "/init-topics.sh"]
+    restart: "no"
+
   clickhouse:
     image: clickhouse/clickhouse-server:24.12-alpine
     ports:
@@ -96,6 +111,48 @@ services:
     command:
       - "until clickhouse-client --host clickhouse --query 'SELECT 1' 2>/dev/null; do sleep 1; done; clickhouse-client --host clickhouse --multiquery < /init.sql"
     restart: "no"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
 
 volumes:
   clickhouse_data:
