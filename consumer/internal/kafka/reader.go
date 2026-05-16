@@ -29,6 +29,9 @@ func NewReader(cfg config.Config) (*Reader, error) {
 		kgo.SeedBrokers(brokers...),
 		kgo.ConsumerGroup(cfg.KafkaGroupID),
 		kgo.ConsumeTopics(cfg.KafkaTopic),
+		kgo.DisableAutoCommit(),
+		// New groups join at the log end; change KAFKA_GROUP_ID to replay from earliest.
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create kafka client: %w", err)
@@ -49,14 +52,18 @@ func (r *Reader) Run(ctx context.Context) error {
 		}
 
 		fetches := r.client.PollFetches(ctx)
-		if err := fetches.Err(); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
+		if errs := fetches.Errors(); len(errs) > 0 {
+			for _, ferr := range errs {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				log.Printf("level=error msg=fetch_partition_failed topic=%s partition=%d err=%v",
+					ferr.Topic, ferr.Partition, ferr.Err)
 			}
-			log.Printf("level=error msg=poll_failed err=%v", err)
 			continue
 		}
 
+		var toCommit []*kgo.Record
 		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
 			for _, rec := range p.Records {
 				if err := r.handleRecord(ctx, rec); err != nil {
@@ -64,12 +71,14 @@ func (r *Reader) Run(ctx context.Context) error {
 						rec.Topic, rec.Partition, rec.Offset, err)
 					continue
 				}
-				if err := r.client.CommitRecords(ctx, rec); err != nil {
-					log.Printf("level=error msg=commit_failed topic=%s partition=%d offset=%d err=%v",
-						rec.Topic, rec.Partition, rec.Offset, err)
-				}
+				toCommit = append(toCommit, rec)
 			}
 		})
+		if len(toCommit) > 0 {
+			if err := r.client.CommitRecords(ctx, toCommit...); err != nil {
+				log.Printf("level=error msg=commit_failed count=%d err=%v", len(toCommit), err)
+			}
+		}
 	}
 }
 
