@@ -2,9 +2,9 @@
 
 **Sub-100ms AI inference observability at 1M events/min — Kafka-backed, ClickHouse-native, multi-tenant.**
 
-**Honest status:** the repo ships a tested **Rust ingestion library** and a **runnable `ingestion` binary** (HTTP `/ingest`, WAL, Kafka/Redpanda producer), a **Go consumer skeleton** (Kafka → stdout logging), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). **ClickHouse writes from the consumer** (circuit breaker, Redis overflow) are **Day 5**. Details: [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
+**Honest status:** the repo ships a tested **Rust ingestion library** and a **runnable `ingestion` binary** (HTTP `/ingest`, WAL, Kafka/Redpanda producer), a **Go consumer skeleton** (Kafka → stdout logging), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). **ClickHouse writes from the consumer** (circuit breaker, Redis overflow) are **Day 5**. Details: [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md). Build plan: [docs/7-day-plan.md](docs/7-day-plan.md).
 
-[![Build](https://img.shields.io/badge/build-pending-lightgrey.svg)](.github/workflows/)
+[![CI](https://github.com/AkshantVats/infra-ai-streaming/actions/workflows/ci.yml/badge.svg)](https://github.com/AkshantVats/infra-ai-streaming/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0--pre-orange.svg)](#)
 
@@ -181,6 +181,12 @@ cd infra-ai-streaming
 2. Run **consumer** (`cd consumer && go run ./cmd/consumer`) and **ingestion** (`cargo run -p ingestion`) with `deploy/.env` sourced; `KAFKA_BROKERS=127.0.0.1:9092` for the consumer.
 3. `curl` `/ingest` (example below) → verify Kafka (`rpk topic consume`) and consumer stdout (`cost_usd=0.00423`). Grafana: http://localhost:3000.
 
+### Grafana (local E2E)
+
+Provisioned dashboard: **AI Inference Observability — Local E2E** at http://localhost:3000 (`admin` / `admin`).
+
+<!-- Add screenshot when available: docs/images/grafana-e2e.png (see docs/images/README.md) -->
+<!-- ![Grafana local E2E dashboard](docs/images/grafana-e2e.png) -->
 
 Example ingest (with binary running; schema aligns with `DESIGN.md` / [`deploy/clickhouse/init.sql`](deploy/clickhouse/init.sql)):
 

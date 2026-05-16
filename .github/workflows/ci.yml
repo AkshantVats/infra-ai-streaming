@@ -26,3 +26,15 @@ jobs:
 
       - name: Cargo test (ingestion)
         run: cargo test -p ingestion --verbose
+
+  consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Go test (consumer)
+        run: cd consumer && go test ./...

@@ -2,7 +2,7 @@
 
 **Audience:** Engineers who completed Day 2 (`config`, `metrics`, `WAL`, rate limiter) and are wiring the **runnable** ingestion binary.
 
-**Sources:** `infra-ai-streaming-7day-plan.md` (sessions 3A–3D), `DESIGN.md`, and the Day 2 code under `ingestion/src/`.
+**Sources:** [7-day-plan.md](7-day-plan.md) (sessions 3A–3D), `DESIGN.md`, and the Day 2 code under `ingestion/src/`.
 
 **Status note:** As of the repo audit in `docs/PROJECT-STATUS.md`, Day 3 modules (`kafka/producer.rs`, `handlers/ingest.rs`, `server.rs`, `main.rs`) are **specified in the plan** but may not all be committed yet. This guide teaches the **target design** you implement on Day 3.
 
@@ -417,4 +417,4 @@ rpk topic consume ai_inference_events -n 1
 
 - [DESIGN.md](../DESIGN.md) — AP vs CP, partition strategy (note: Day 3 plan uses **`tenant_id` only** as Kafka key; DESIGN §3 discusses `hash(tenant_id:model_id)` for hot-partition avoidance—evolve keying when you tune partitions).
 - [PROJECT-STATUS.md](PROJECT-STATUS.md) — what is committed vs. planned.
-- [infra-ai-streaming-7day-plan.md](../infra-ai-streaming-7day-plan.md) — authoritative session prompts for 3A–3C.
+- [7-day-plan.md](7-day-plan.md) — authoritative session prompts for 3A–3C.
