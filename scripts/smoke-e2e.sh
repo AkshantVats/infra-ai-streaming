@@ -49,13 +49,13 @@ echo "==> Compose services"
 "${COMPOSE[@]}" ps
 
 echo "==> Verifying Kafka topics"
-"${COMPOSE[@]}" run --rm redpanda rpk topic list --brokers redpanda:9092 | tee /tmp/rpk-topics.txt
+"${COMPOSE[@]}" exec -T redpanda rpk topic list | tee /tmp/rpk-topics.txt
 grep -q ai_inference_events /tmp/rpk-topics.txt
 grep -q ai_inference_dlq /tmp/rpk-topics.txt
 
 echo "==> Unit tests (no compose required for Go)"
 cargo test -p ingestion
-go test ./consumer/...
+(cd consumer && go test ./...)
 
 if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
   echo "==> Ingestion reachable — posting test event"
