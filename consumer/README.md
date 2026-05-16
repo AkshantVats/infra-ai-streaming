@@ -24,7 +24,7 @@ go run ./consumer/cmd/consumer
 |----------|---------|-------------|
 | `KAFKA_BROKERS` | `127.0.0.1:9092` | Comma-separated broker list |
 | `KAFKA_TOPIC` | `ai_inference_events` | Topic to consume |
-| `KAFKA_GROUP_ID` | `ai-inference-consumer-dev` | Consumer group; changing it replays from the group's initial offset policy |
+| `KAFKA_GROUP_ID` | `ai-inference-consumer-dev` | Consumer group; **new** groups join at the log end. Change the group id (or reset offsets) to replay history |
 | `LOG_LEVEL` | `info` | Reserved for structured logging (stdout uses `log` today) |
 
 ## Tests
