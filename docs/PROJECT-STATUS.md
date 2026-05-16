@@ -12,14 +12,26 @@ This document states what exists in the repository today versus what is still de
 - **Runnable `ingestion` binary** (`cargo build -p ingestion --bin ingestion` / `cargo run -p ingestion`): Axum HTTP server on `HTTP_PORT` (default **8080**) with `GET /health`, `GET /metrics`, and `POST /ingest`.
 - **WAL + Kafka produce path**: Handler appends to a segment WAL (`WAL_DIR`, default `/tmp/wal`) before enqueue; a background task drives an **rdkafka** producer to `KAFKA_TOPIC` with DLQ on persistent failure; WAL entries are **mark_acked** after broker delivery. Startup **replays unacked** WAL entries into the channel.
 - **Redis rate limiting**: Per-tenant token bucket on ingest (fail-open when Redis is unavailable, per design).
-- **Local dependency stack**: Docker Compose runs **Redis**, **Redpanda** (Kafka-compatible API on **9092**), and **ClickHouse** for end-to-end local dev—not a separate native Kafka install on the host.
+- **Go consumer skeleton** (`consumer/`): franz-go reader on `ai_inference_events`, deserializes `{"events":[...]}`, logs each event to stdout. Unit tests for JSON deserialize.
+- **Local dependency stack**: Docker Compose runs **Redis**, **Redpanda**, **ClickHouse**, **Prometheus**, **Grafana**, plus one-shot **redpanda-init** (topics) and **clickhouse-init** (DDL). See [deploy/README.md](../deploy/README.md) for ports.
 
 ## Not production-complete yet (gaps)
 
-- **No Go consumer** as source in this repository: the consumer, ClickHouse batch writer, circuit breaker, and Redis overflow path are specified in design and diagrams only.
-- **No Helm / Kubernetes charts** checked in; deployment artifacts here are local-dev oriented (Docker Compose, observability placeholders).
-- **End-to-end pipeline incomplete**: events can be ingested and produced to Kafka/Redpanda locally, but nothing in-tree yet consumes into ClickHouse.
-- **Integration / load tests**: CI and `./scripts/test-ingestion.sh` run **unit tests**; full HTTP→Kafka E2E requires Compose (Redis + Redpanda) and a running binary—documented in README, not gated in CI yet.
+- **ClickHouse writer from Go**: batch insert, circuit breaker, Redis overflow, DLQ consumer logic — **Day 5**.
+- **Go consumer metrics HTTP server** (`:9091`): deferred to Day 5+.
+- **No Helm / Kubernetes charts** checked in; deployment artifacts here are local-dev oriented.
+- **End-to-end warehouse path incomplete**: events reach Kafka and consumer stdout; `infra_ai.inference_events` row count stays **0** until the writer lands.
+- **Integration / load tests**: CI runs **Rust unit tests** only; compose E2E and `go test ./consumer/...` are local (`scripts/smoke-e2e.sh`).
+
+## E2E status (Day 4)
+
+| Step | Status |
+|------|--------|
+| `docker compose up` — 5 long-running services + 2 init jobs | Implemented |
+| Topics `ai_inference_events`, `ai_inference_dlq` | `redpanda-init` |
+| `curl /ingest` → 202 | Requires running ingestion binary |
+| Go consumer stdout with `cost_usd` | Requires running consumer + ingest |
+| Prometheus scrape ingestion `:8080/metrics` | Compose + running ingestion |
 
 ## How to use this doc
 

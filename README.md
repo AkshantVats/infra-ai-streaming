@@ -2,7 +2,7 @@
 
 **Sub-100ms AI inference observability at 1M events/min — Kafka-backed, ClickHouse-native, multi-tenant.**
 
-**Honest status:** the repo ships a tested **Rust ingestion library** and a **runnable `ingestion` binary** (HTTP `/ingest`, WAL, Kafka/Redpanda producer), CI, design docs, and a **local Docker dependency stack** (Redis, Redpanda, ClickHouse). The **Go consumer** and full warehouse path are **not in-tree yet**. Details: [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
+**Honest status:** the repo ships a tested **Rust ingestion library** and a **runnable `ingestion` binary** (HTTP `/ingest`, WAL, Kafka/Redpanda producer), a **Go consumer skeleton** (Kafka → stdout logging), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). **ClickHouse writes from the consumer** (circuit breaker, Redis overflow) are **Day 5**. Details: [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
 
 [![Build](https://img.shields.io/badge/build-pending-lightgrey.svg)](.github/workflows/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -73,8 +73,8 @@ flowchart LR
   G -.->|"dead-letter poison / failed batches"| TDLQ
   OV -.->|"drain when CH healthy"| G
   CH -->|"queries / panels"| GF
-  R -->|":9090 /metrics"| PR
-  G -->|":9091 /metrics"| PR
+  R -->|":8080 /metrics"| PR
+  G -.->|":9091 /metrics (Day 5)"| PR
 ```
 
 <!-- architecture-diagram-end -->
@@ -90,7 +90,7 @@ Implemented vs planned (see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md)):
 - **Rust (Axum) HTTP ingestion** *(Day 3)*: `POST /ingest`, schema validation, Redis rate limits, bounded `mpsc` backpressure (`503` + `Retry-After` when the channel is full).
 - **WAL before Kafka produce** *(Day 3)*: segment WAL + fsync before accept; unacked replay on startup; `mark_acked` after broker delivery (at-least-once).
 - **Kafka / Redpanda**: `ai_inference_events` as primary stream; `ai_inference_dlq` for poison or persistently failing batches.
-- **Go stream consumer**: concurrent read, **1000 events or 500ms** flush policy, ClickHouse batch writer, **circuit breaker** with **Redis LIST overflow** when inserts fail or time out.
+- **Go stream consumer** *(Day 4 skeleton)*: franz-go reader, batched JSON deserialize, **stdout logging** per event. *(Day 5)*: **1000 events or 500ms** flush, ClickHouse batch writer, **circuit breaker**, **Redis LIST overflow**.
 - **Redis**: distributed **token-bucket rate limit per `tenant_id`** on ingest; **overflow buffer** when ClickHouse is slow or unavailable.
 - **ClickHouse**: MergeTree-style storage, high-cardinality dimensions (`tenant_id`, `model_id`), time-range scans optimized for rollups and dashboards.
 - **Self-observability**: Prometheus scrapes Rust and Go (`/metrics`) — ingestion latency histograms, Kafka consumer lag, DLQ depth, circuit-breaker state.
@@ -129,9 +129,9 @@ Implemented vs planned (see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md)):
 
 ## Getting started
 
-> **Status:** Ingestion **library + binary** build and test locally (`./scripts/test-ingestion.sh`). For **HTTP → WAL → Kafka**, start Compose (Redis + Redpanda), then `cargo run -p ingestion`. The **Go consumer** is **not in this repo yet**; see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md).
+> **Status:** Ingestion **library + binary** build and test locally (`./scripts/test-ingestion.sh`). For **HTTP → WAL → Kafka → Go stdout**, use the three-terminal flow below or [`scripts/smoke-e2e.sh`](scripts/smoke-e2e.sh).
 
-**Prerequisites:** Rust **1.86+** (see [`rust-toolchain.toml`](rust-toolchain.toml); `icu` / `idna` deps require it with current resolver), **cmake** (for `rdkafka` via `cmake-build`), Docker when you run dependencies locally.
+**Prerequisites:** Rust **1.86+** (see [`rust-toolchain.toml`](rust-toolchain.toml)), **Go 1.22+**, **cmake** (for `rdkafka`), Docker when you run the full local stack.
 
 **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) (clone, toolchain, `cargo test`, Compose, PR expectations).
 
@@ -141,7 +141,7 @@ See **[docs/dev-macos.md](docs/dev-macos.md)** for Xcode Command Line Tools, Hom
 
 ### Local dependencies (Docker)
 
-[`deploy/docker-compose.yml`](deploy/docker-compose.yml) runs **Redis** (6379), **Redpanda** (Kafka API on **9092**, Admin API on **9644**), and **ClickHouse** (HTTP **8123**, native **9000**), with a placeholder DDL in [`deploy/clickhouse/init.sql`](deploy/clickhouse/init.sql).
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml) runs **Redis** (6379), **Redpanda** (Kafka API **9092**, admin **9644**), **ClickHouse** (**8123** / **9000**), **Prometheus** (**9090**), and **Grafana** (**3000**), plus one-shot `redpanda-init` and `clickhouse-init`. Full `InferenceEvent` DDL: [`deploy/clickhouse/init.sql`](deploy/clickhouse/init.sql).
 
 ```bash
 cp deploy/.env.example deploy/.env
@@ -165,9 +165,13 @@ cd infra-ai-streaming
 # CARGO_BUILD_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 ./scripts/docker-test-ingestion.sh
 
 # E2E (after: cp deploy/.env.example deploy/.env && docker compose … up -d):
-# set -a && source deploy/.env && set +a
-# cargo run -p ingestion
-# go run ./consumer/cmd/consumer/   # not in repo yet
+# Terminal A — consumer:
+#   set -a && source deploy/.env && set +a && export KAFKA_BROKERS=127.0.0.1:9092
+#   go run ./consumer/cmd/consumer
+# Terminal B — ingestion:
+#   set -a && source deploy/.env && set +a && cargo run -p ingestion
+# Terminal C — ingest (or ./scripts/smoke-e2e.sh)
+# Observability: http://localhost:9090/targets  http://localhost:3000 (admin/admin)
 ```
 
 Example ingest (with binary running; schema aligns with `DESIGN.md` / [`deploy/clickhouse/init.sql`](deploy/clickhouse/init.sql)):
@@ -212,7 +216,7 @@ Ingest optimizes **availability** and **honest overload behavior**: prefer accep
 ```
 infra-ai-streaming/
 ├── ingestion/          # Rust — Axum binary, WAL, Kafka producer, rate limit client
-├── consumer/           # Go — Kafka reader, ClickHouse writer, Redis overflow
+├── consumer/           # Go — Kafka reader (stdout Day 4; CH writer Day 5)
 ├── deploy/             # docker-compose, Prometheus, Grafana, ClickHouse init
 ├── dashboards/         # Grafana JSON exports
 ├── load-test/          # k6 scripts

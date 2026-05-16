@@ -127,10 +127,19 @@ The `ingestion` binary implements §2–§4 at a first milestone:
 - **Kafka:** **rdkafka** producer to `KAFKA_TOPIC`; failed batches after retries go to `KAFKA_DLQ_TOPIC`. Local dev uses **Redpanda** in Docker Compose (`127.0.0.1:9092`)—Kafka-compatible API, not a host-native Kafka install.
 - **Rate limit:** Redis token bucket per `tenant_id` (and `X-Tenant-ID` header); fail-open on Redis errors per §5.
 
-**Still out of scope in-tree:** Go consumer, ClickHouse writer, Redis overflow drain, Helm charts.
+**Still out of scope in-tree (Day 4):** ClickHouse writer, Redis overflow drain, Helm charts.
+
+## Appendix — Day 4 milestone (Go consumer skeleton)
+
+- **Consumer group (local dev):** `ai-inference-consumer-dev` (`KAFKA_GROUP_ID` in `deploy/.env.example`). Production name TBD (`ai-inference-consumer-v1`).
+- **Kafka message envelope:** each record is JSON `{"events":[<InferenceEvent>, ...]}` — matches `ingestion/src/kafka/producer.rs`.
+- **Consumer behavior:** franz-go poll loop; deserialize batch; **log each event to stdout**; commit offset after successful log. **No ClickHouse insert** until Day 5.
+- **Metrics:** Rust ingestion exposes Prometheus on **`HTTP_PORT` (default 8080)** at `/metrics`. Compose Prometheus scrapes `host.docker.internal:8080`, not a separate `:9090` listener on the binary.
+- **Partition key gap:** producer keys by **`tenant_id` only** today; DESIGN §3 target `hash(tenant_id:model_id)` is **not** implemented yet (tracked as open item).
 
 ## Appendix — Open items
 
+- **Partition key:** migrate producer from `tenant_id` to `hash(tenant_id:model_id)` without breaking replay.
 - Exact **Kafka `acks`** default per environment (latency vs durability).
 - Whether **HTTP 429** vs **503** is exposed for all overload classes (backpressure currently uses **503**; document here if that changes).
 - OTLP backend choice for local vs production.
