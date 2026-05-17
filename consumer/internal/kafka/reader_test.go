@@ -2,8 +2,6 @@ package kafka
 
 import (
 	"testing"
-
-	"github.com/akshantvats/infra-ai-streaming/consumer/internal/model"
 )
 
 func TestDeserializeBatch(t *testing.T) {
@@ -50,13 +48,3 @@ func TestDeserializeBatchInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestLogEventDoesNotPanic(t *testing.T) {
-	LogEvent(model.InferenceEvent{
-		TenantID:         "demo",
-		ModelID:          "gpt-4o",
-		PromptTokens:     512,
-		CompletionTokens: 128,
-		CostUSD:          0.00423,
-		LatencyMs:        342,
-	})
-}

@@ -7,19 +7,28 @@ import (
 	"log"
 	"strings"
 
-	"github.com/akshantvats/infra-ai-streaming/consumer/internal/config"
-	"github.com/akshantvats/infra-ai-streaming/consumer/internal/model"
 	"github.com/twmb/franz-go/pkg/kgo"
+
+	"github.com/akshantvats/infra-ai-streaming/consumer/internal/config"
+	"github.com/akshantvats/infra-ai-streaming/consumer/internal/metrics"
+	"github.com/akshantvats/infra-ai-streaming/consumer/internal/model"
 )
 
-// Reader consumes batched inference events from Kafka and logs each event to stdout.
+// EventSink accepts inference events and blocks until handoff (CH, overflow, or DLQ).
+type EventSink interface {
+	Accept(ctx context.Context, events []model.InferenceEvent) error
+}
+
+// Reader consumes batched inference events from Kafka and forwards them to the sink.
 type Reader struct {
 	client *kgo.Client
 	topic  string
+	sink   EventSink
+	m      *metrics.M
 }
 
 // NewReader builds a franz-go consumer for the configured topic and group.
-func NewReader(cfg config.Config) (*Reader, error) {
+func NewReader(cfg config.Config, sink EventSink, m *metrics.M) (*Reader, error) {
 	brokers := strings.Split(cfg.KafkaBrokers, ",")
 	for i := range brokers {
 		brokers[i] = strings.TrimSpace(brokers[i])
@@ -30,14 +39,13 @@ func NewReader(cfg config.Config) (*Reader, error) {
 		kgo.ConsumerGroup(cfg.KafkaGroupID),
 		kgo.ConsumeTopics(cfg.KafkaTopic),
 		kgo.DisableAutoCommit(),
-		// New groups join at the log end; change KAFKA_GROUP_ID to replay from earliest.
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create kafka client: %w", err)
 	}
 
-	return &Reader{client: cl, topic: cfg.KafkaTopic}, nil
+	return &Reader{client: cl, topic: cfg.KafkaTopic, sink: sink, m: m}, nil
 }
 
 // Run polls records until ctx is cancelled.
@@ -83,14 +91,14 @@ func (r *Reader) Run(ctx context.Context) error {
 }
 
 func (r *Reader) handleRecord(ctx context.Context, rec *kgo.Record) error {
-	_ = ctx
 	batch, err := DeserializeBatch(rec.Value)
 	if err != nil {
 		return err
 	}
-	for _, event := range batch.Events {
-		LogEvent(event)
+	if err := r.sink.Accept(ctx, batch.Events); err != nil {
+		return err
 	}
+	r.m.KafkaRecordsProcessed.Add(float64(len(batch.Events)))
 	return nil
 }
 
@@ -101,19 +109,6 @@ func DeserializeBatch(payload []byte) (model.IngestBatch, error) {
 		return model.IngestBatch{}, fmt.Errorf("unmarshal ingest batch: %w", err)
 	}
 	return batch, nil
-}
-
-// LogEvent prints the blog-stable stdout format for each consumed event.
-func LogEvent(e model.InferenceEvent) {
-	log.Printf(
-		"level=info msg=event_consumed tenant_id=%s model_id=%s prompt_tokens=%d completion_tokens=%d cost_usd=%g latency_ms=%d",
-		e.TenantID,
-		e.ModelID,
-		e.PromptTokens,
-		e.CompletionTokens,
-		e.CostUSD,
-		e.LatencyMs,
-	)
 }
 
 // Close releases the underlying Kafka client.

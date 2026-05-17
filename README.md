@@ -2,7 +2,7 @@
 
 **Sub-100ms AI inference observability at 1M events/min — Kafka-backed, ClickHouse-native, multi-tenant.**
 
-**Honest status:** the repo ships a tested **Rust ingestion library** and a **runnable `ingestion` binary** (HTTP `/ingest`, WAL, Kafka/Redpanda producer), a **Go consumer skeleton** (Kafka → stdout logging), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). **ClickHouse writes from the consumer** (circuit breaker, Redis overflow) are **Day 5**. Details: [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md). Build plan: [docs/7-day-plan.md](docs/7-day-plan.md).
+**Honest status:** the repo ships a tested **Rust ingestion library** and **runnable `ingestion` binary**, a **Go consumer** (Kafka → ClickHouse batch writer, circuit breaker, Redis overflow, DLQ), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). See [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) and [OBSERVABILITY.md](OBSERVABILITY.md). Build plan: [docs/7-day-plan.md](docs/7-day-plan.md).
 
 [![CI](https://github.com/AkshantVats/infra-ai-streaming/actions/workflows/ci.yml/badge.svg)](https://github.com/AkshantVats/infra-ai-streaming/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -74,7 +74,7 @@ flowchart LR
   OV -.->|"drain when CH healthy"| G
   CH -->|"queries / panels"| GF
   R -->|":8080 /metrics"| PR
-  G -.->|":9091 /metrics (Day 5)"| PR
+  G -->|":9091 /metrics"| PR
 ```
 
 <!-- architecture-diagram-end -->
@@ -90,7 +90,7 @@ Implemented vs planned (see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md)):
 - **Rust (Axum) HTTP ingestion** *(Day 3)*: `POST /ingest`, schema validation, Redis rate limits, bounded `mpsc` backpressure (`503` + `Retry-After` when the channel is full).
 - **WAL before Kafka produce** *(Day 3)*: segment WAL + fsync before accept; unacked replay on startup; `mark_acked` after broker delivery (at-least-once).
 - **Kafka / Redpanda**: `ai_inference_events` as primary stream; `ai_inference_dlq` for poison or persistently failing batches.
-- **Go stream consumer** *(Day 4 skeleton)*: franz-go reader, batched JSON deserialize, **stdout logging** per event. *(Day 5)*: **1000 events or 500ms** flush, ClickHouse batch writer, **circuit breaker**, **Redis LIST overflow**.
+- **Go stream consumer**: franz-go reader; **1000 events or 500ms** batch flush to ClickHouse; **circuit breaker** (5 failures → open, 30s half-open); **Redis LIST overflow**; **DLQ** after 3 insert retries; offsets commit after handoff.
 - **Redis**: distributed **token-bucket rate limit per `tenant_id`** on ingest; **overflow buffer** when ClickHouse is slow or unavailable.
 - **ClickHouse**: MergeTree-style storage, high-cardinality dimensions (`tenant_id`, `model_id`), time-range scans optimized for rollups and dashboards.
 - **Self-observability**: Prometheus scrapes Rust and Go (`/metrics`) — ingestion latency histograms, Kafka consumer lag, DLQ depth, circuit-breaker state.

@@ -127,15 +127,22 @@ The `ingestion` binary implements §2–§4 at a first milestone:
 - **Kafka:** **rdkafka** producer to `KAFKA_TOPIC`; failed batches after retries go to `KAFKA_DLQ_TOPIC`. Local dev uses **Redpanda** in Docker Compose (`127.0.0.1:9092`)—Kafka-compatible API, not a host-native Kafka install.
 - **Rate limit:** Redis token bucket per `tenant_id` (and `X-Tenant-ID` header); fail-open on Redis errors per §5.
 
-**Still out of scope in-tree (Day 4):** ClickHouse writer, Redis overflow drain, Helm charts.
+**Still out of scope in-tree:** Helm charts, anomaly detector, OTLP wiring.
 
 ## Appendix — Day 4 milestone (Go consumer skeleton)
 
 - **Consumer group (local dev):** `ai-inference-consumer-dev` (`KAFKA_GROUP_ID` in `deploy/.env.example`). Production name TBD (`ai-inference-consumer-v1`).
 - **Kafka message envelope:** each record is JSON `{"events":[<InferenceEvent>, ...]}` — matches `ingestion/src/kafka/producer.rs`.
-- **Consumer behavior:** franz-go poll loop; deserialize batch; **log each event to stdout**; commit offset after successful log. **No ClickHouse insert** until Day 5.
-- **Metrics:** Rust ingestion exposes Prometheus on **`HTTP_PORT` (default 8080)** at `/metrics`. Compose Prometheus scrapes `host.docker.internal:8080`, not a separate `:9090` listener on the binary.
 - **Partition key gap:** producer keys by **`tenant_id` only** today; DESIGN §3 target `hash(tenant_id:model_id)` is **not** implemented yet (tracked as open item).
+
+## Appendix — Day 5 milestone (ClickHouse writer)
+
+- **BatchWriter:** flush at **1000** events or **500ms**; maps columns to `deploy/clickhouse/init.sql` (`infra_ai.inference_events`).
+- **Circuit breaker:** **5** failures → open; **30s** → half-open; **1** success → closed. When open, batches go to **Redis LIST** overflow (`REDIS_OVERFLOW_KEY`).
+- **Overflow drain:** every **5s**, pop up to **5000** events when breaker is closed.
+- **DLQ:** **3** insert retries per batch, then per-event publish to `ai_inference_dlq`.
+- **Offsets:** commit only after CH insert, overflow push, or DLQ handoff for all events in the Kafka record.
+- **Metrics:** consumer HTTP **`METRICS_PORT` (default 9091)** — `clickhouse_*`, `circuit_breaker_state`, `redis_overflow_depth`, `dlq_events_total`. See [OBSERVABILITY.md](OBSERVABILITY.md).
 
 ## Appendix — Open items
 
