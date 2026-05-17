@@ -79,7 +79,7 @@
           "mappings": [
             {
               "options": {
-                "0": { "color": "orange", "index": 0, "text": "DOWN (Day 5)" },
+                "0": { "color": "red", "index": 0, "text": "DOWN" },
                 "1": { "color": "green", "index": 1, "text": "UP" }
               },
               "type": "value"
@@ -146,15 +146,118 @@
       "id": 4,
       "options": {
         "code": { "language": "plaintext", "showLineNumbers": false },
-        "content": "**Go consumer (Day 4):** events are logged to stdout (`msg=event_consumed`). Prometheus job `consumer` targets `:9091/metrics` — **not implemented yet** (Day 5). Use terminal / `rpk topic consume` for consumer-side proof until metrics land.",
+        "content": "**Go consumer (Day 5):** batch writer → ClickHouse; circuit breaker + Redis overflow + DLQ. Metrics on `:9091/metrics`. Verify rows in ClickHouse panel below after `curl /ingest`.",
         "mode": "markdown"
       },
-      "title": "Consumer observability gap",
+      "title": "Consumer path",
       "type": "text"
     },
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 8 },
+      "id": 102,
+      "panels": [],
+      "title": "Consumer (Go → ClickHouse)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ops" },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 9 },
+      "id": 20,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "expr": "rate(kafka_records_processed_total[5m])",
+          "legendFormat": "records/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Kafka handoff rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 9 },
+      "id": 21,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(clickhouse_flush_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99 flush",
+          "refId": "A"
+        }
+      ],
+      "title": "ClickHouse flush latency (p99)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "0": { "color": "green", "text": "closed" },
+                "1": { "color": "red", "text": "open" }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 4, "x": 16, "y": 9 },
+      "id": 22,
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "circuit_breaker_state{state=\"open\"}", "refId": "A" }
+      ],
+      "title": "Circuit breaker OPEN",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 4, "x": 20, "y": 9 },
+      "id": 23,
+      "options": { "colorMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "redis_overflow_depth", "refId": "A" },
+        { "expr": "increase(dlq_events_total[1h])", "legendFormat": "dlq 1h", "refId": "B" }
+      ],
+      "title": "Overflow depth / DLQ (1h)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 16 },
+      "id": 24,
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT count() AS rows, max(cost_usd) AS max_cost_usd, max(timestamp) AS latest FROM infra_ai.inference_events",
+          "refId": "A"
+        }
+      ],
+      "title": "ClickHouse inference_events (count / max cost)",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
       "id": 101,
       "panels": [],
       "title": "Ingest (Rust)",
@@ -169,7 +272,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 9 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 23 },
       "id": 10,
       "options": {
         "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" },
@@ -195,7 +298,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 9 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 23 },
       "id": 11,
       "options": {
         "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" },
@@ -227,7 +330,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 9 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 23 },
       "id": 12,
       "options": {
         "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" },
@@ -259,7 +362,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 17 },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 31 },
       "id": 13,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" },
@@ -305,7 +408,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 17 },
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 31 },
       "id": 14,
       "options": {
         "colorMode": "value",
@@ -332,7 +435,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 17 },
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 31 },
       "id": 15,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },

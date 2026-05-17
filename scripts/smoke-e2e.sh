@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Day 4 E2E smoke: compose health, topics, optional ingest (ingestion + consumer must be running).
+# Day 5 E2E smoke: compose health, topics, tests, optional ingest → ClickHouse (ingestion + consumer must be running).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -70,11 +70,29 @@ if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
   if [[ "$code" != "202" ]]; then
     echo "WARN: expected 202 from /ingest (start: cargo run -p ingestion)" >&2
   else
-    echo "==> Check Go consumer stdout for: cost_usd=0.00423 tenant_id=demo model_id=gpt-4o"
+    echo "==> Waiting for ClickHouse rows (up to 15s)"
+    ch_ok=0
+    for _ in $(seq 1 15); do
+      count="$("${COMPOSE[@]}" exec -T clickhouse clickhouse-client --query \
+        "SELECT count() FROM infra_ai.inference_events WHERE tenant_id='demo' AND cost_usd > 0" 2>/dev/null || echo 0)"
+      if [[ "${count:-0}" -gt 0 ]]; then
+        ch_ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "$ch_ok" -eq 1 ]]; then
+      echo "    ClickHouse rows OK (demo tenant, cost_usd > 0)"
+      "${COMPOSE[@]}" exec -T clickhouse clickhouse-client --query \
+        "SELECT tenant_id, model_id, cost_usd FROM infra_ai.inference_events WHERE tenant_id='demo' ORDER BY timestamp DESC LIMIT 3"
+    else
+      echo "WARN: no ClickHouse rows yet (start consumer: cd consumer && go run ./cmd/consumer)" >&2
+    fi
   fi
 else
   echo "==> Skipping /ingest (start ingestion: cargo run -p ingestion)"
-  echo "    Then in another terminal: go run ./consumer/cmd/consumer"
+  echo "    Terminal A: cd consumer && go run ./cmd/consumer"
+  echo "    Terminal B: cargo run -p ingestion"
   echo "    Re-run this script or curl manually (see README)."
 fi
 
@@ -83,6 +101,11 @@ if curl -sf http://localhost:8080/metrics | head -5; then
   echo "    ingestion /metrics OK on :8080"
 else
   echo "    WARN: ingestion /metrics not reachable on :8080" >&2
+fi
+if curl -sf http://localhost:9091/metrics | grep -q clickhouse_batch_size; then
+  echo "    consumer /metrics OK on :9091"
+else
+  echo "    WARN: consumer /metrics not reachable on :9091 (go run ./cmd/consumer)" >&2
 fi
 
 echo "==> Smoke complete"

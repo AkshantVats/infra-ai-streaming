@@ -1,0 +1,10 @@
+<clickhouse>
+  <!-- Local dev: allow host-run consumer/ingestion via published :9000 / :8123 -->
+  <users>
+    <default>
+      <networks>
+        <ip>::/0</ip>
+      </networks>
+    </default>
+  </users>
+</clickhouse>

@@ -1,5 +1,4 @@
-# Scrape ingestion HTTP /metrics on host (Rust binary runs outside compose).
-# Consumer metrics on :9091 are a Day 5 placeholder job.
+# Scrape ingestion (:8080) and consumer (:9091) on the host via host.docker.internal.
 global:
   scrape_interval: 15s
   evaluation_interval: 15s

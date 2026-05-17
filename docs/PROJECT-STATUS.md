@@ -12,37 +12,38 @@ This document states what exists in the repository today versus what is still de
 - **Runnable `ingestion` binary** (`cargo build -p ingestion --bin ingestion` / `cargo run -p ingestion`): Axum HTTP server on `HTTP_PORT` (default **8080**) with `GET /health`, `GET /metrics`, and `POST /ingest`.
 - **WAL + Kafka produce path**: Handler appends to a segment WAL (`WAL_DIR`, default `/tmp/wal`) before enqueue; a background task drives an **rdkafka** producer to `KAFKA_TOPIC` with DLQ on persistent failure; WAL entries are **mark_acked** after broker delivery. Startup **replays unacked** WAL entries into the channel.
 - **Redis rate limiting**: Per-tenant token bucket on ingest (fail-open when Redis is unavailable, per design).
-- **Go consumer skeleton** (`consumer/`): franz-go reader on `ai_inference_events`, deserializes `{"events":[...]}`, logs each event to stdout. Unit tests for JSON deserialize.
+- **Go consumer** (`consumer/`): franz-go reader → ClickHouse **BatchWriter** (1000 events / 500ms), **circuit breaker**, **Redis overflow**, **DLQ** (`ai_inference_dlq`), Prometheus on **`:9091`**. Unit tests for JSON, breaker, row mapping.
+- **OBSERVABILITY.md**: Metrics catalog, SLO sketches, ClickHouse verification queries.
 - **Local dependency stack**: Docker Compose runs **Redis**, **Redpanda**, **ClickHouse**, **Prometheus**, **Grafana**, plus one-shot **redpanda-init** (topics) and **clickhouse-init** (DDL). See [deploy/README.md](../deploy/README.md) for ports.
 
 ## Not production-complete yet (gaps)
 
-- **ClickHouse writer from Go**: batch insert, circuit breaker, Redis overflow, DLQ consumer logic — **Day 5**.
-- **Go consumer metrics HTTP server** (`:9091`): deferred to Day 5+.
+- **Anomaly detection** and `ai_anomalies` topic publishing — backlog.
 - **No Helm / Kubernetes charts** checked in; deployment artifacts here are local-dev oriented.
-- **End-to-end warehouse path incomplete**: events reach Kafka and consumer stdout; `infra_ai.inference_events` row count stays **0** until the writer lands.
-- **Integration / load tests**: CI runs **Rust unit tests** only; compose E2E and `go test ./consumer/...` are local (`scripts/smoke-e2e.sh`).
+- **Integration / load tests in CI**: CI runs **Rust unit tests** only; compose E2E and `go test ./consumer/...` are local (`scripts/smoke-e2e.sh`).
+- **Partition key:** producer keys by `tenant_id` only; DESIGN target `hash(tenant_id:model_id)` not implemented.
 
-## E2E status (Day 4)
+## E2E status (Day 5)
 
 | Step | Status |
 |------|--------|
 | `docker compose up` — 5 long-running services + 2 init jobs | Implemented |
 | Topics `ai_inference_events`, `ai_inference_dlq` | `redpanda-init` |
 | `curl /ingest` → 202 | Requires running ingestion binary |
-| Go consumer stdout with `cost_usd` | Requires running consumer + ingest |
-| Prometheus scrape ingestion `:8080/metrics` | Compose + running ingestion |
-| Grafana dashboard **AI Inference Observability — Local E2E** | Provisioned under `deploy/grafana/provisioning/dashboards/` (uid `ai-inference-e2e-local`) |
+| ClickHouse `infra_ai.inference_events` rows with `cost_usd` | Requires running consumer + ingest |
+| Prometheus scrape ingestion `:8080` and consumer `:9091` | Compose + host binaries |
+| Grafana dashboard **AI Inference Observability — Local E2E** | Provisioned (`ai-inference-e2e-local`) |
 
-## 3-step local demo (HTTP → Kafka → stdout)
+## 3-step local demo (HTTP → Kafka → ClickHouse)
 
-1. **Stack:** `cp deploy/.env.example deploy/.env && docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d` — then open Grafana http://localhost:3000 (`admin`/`admin`) → dashboard **AI Inference Observability — Local E2E**.
-2. **Pipeline:** Terminal A — `cd consumer && set -a && source ../deploy/.env && set +a && export KAFKA_BROKERS=127.0.0.1:9092 && go run ./cmd/consumer`. Terminal B — `set -a && source deploy/.env && set +a && cargo run -p ingestion`.
-3. **Proof:** `curl -X POST http://localhost:8080/ingest …` (see root `README.md`); Kafka — `docker compose … exec -T redpanda rpk topic consume ai_inference_events -n 1 -o -1`; consumer stdout — `msg=event_consumed … cost_usd=0.00423`.
+1. **Stack:** `cp deploy/.env.example deploy/.env && docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d` — Grafana http://localhost:3000 (`admin`/`admin`) → **AI Inference Observability — Local E2E**.
+2. **Pipeline:** Terminal A — `cd consumer && set -a && source ../deploy/.env && set +a && go run ./cmd/consumer`. Terminal B — `set -a && source deploy/.env && set +a && cargo run -p ingestion`.
+3. **Proof:** `curl -X POST http://localhost:8080/ingest …` (see root `README.md`); ClickHouse — `SELECT count(), max(cost_usd) FROM infra_ai.inference_events`; Grafana consumer panels + Prometheus `up{job="consumer"}`.
 
-Or: `./scripts/smoke-e2e.sh` (compose + tests; ingest if ingestion is already up).
+Or: `./scripts/smoke-e2e.sh` (compose + tests; ingest + CH check if services are up).
 
 ## How to use this doc
 
 - For **local development**, see [dev-macos.md](dev-macos.md) and [../deploy/docker-compose.yml](../deploy/docker-compose.yml). Compose services use `env_file: .env` under `deploy/` — copy [../deploy/.env.example](../deploy/.env.example) to `deploy/.env` first.
+- For **observability**, see [../OBSERVABILITY.md](../OBSERVABILITY.md).
 - For **contributing** (tests, compose, PR expectations), see [../CONTRIBUTING.md](../CONTRIBUTING.md).
