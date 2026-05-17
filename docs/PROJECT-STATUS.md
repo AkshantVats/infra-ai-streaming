@@ -46,4 +46,5 @@ Or: `./scripts/smoke-e2e.sh` (compose + tests; ingest + CH check if services are
 
 - For **local development**, see [dev-macos.md](dev-macos.md) and [../deploy/docker-compose.yml](../deploy/docker-compose.yml). Compose services use `env_file: .env` under `deploy/` — copy [../deploy/.env.example](../deploy/.env.example) to `deploy/.env` first.
 - For **observability**, see [../OBSERVABILITY.md](../OBSERVABILITY.md).
+- For **E2E flows, Grafana panel guide, and demo scenarios**, see [END-TO-END-FLOWS.md](END-TO-END-FLOWS.md).
 - For **contributing** (tests, compose, PR expectations), see [../CONTRIBUTING.md](../CONTRIBUTING.md).

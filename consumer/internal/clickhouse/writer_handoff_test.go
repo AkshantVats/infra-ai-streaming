@@ -1,0 +1,86 @@
+package clickhouse
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/akshantvats/infra-ai-streaming/consumer/internal/metrics"
+	"github.com/akshantvats/infra-ai-streaming/consumer/internal/model"
+)
+
+type mockOverflow struct {
+	pushed int
+}
+
+func (m *mockOverflow) Push(_ context.Context, events []model.InferenceEvent) error {
+	m.pushed += len(events)
+	return nil
+}
+
+func (m *mockOverflow) PopN(context.Context, int) ([]model.InferenceEvent, error) {
+	return nil, nil
+}
+
+func (m *mockOverflow) Depth(context.Context) (int64, error) {
+	return int64(m.pushed), nil
+}
+
+func sampleEvent() model.InferenceEvent {
+	return model.InferenceEvent{
+		TenantID:         "t1",
+		ModelID:          "gpt-4o",
+		TimestampUnixMs:  1715000000000,
+		LatencyMs:        10,
+		PromptTokens:     1,
+		CompletionTokens: 1,
+		CostUSD:          0.01,
+	}
+}
+
+func TestFinishTicketSignalsWhenRemainingZero(t *testing.T) {
+	w := &BatchWriter{tickets: make(map[uint64]*handoffTicket)}
+	done := make(chan struct{})
+	w.tickets[1] = &handoffTicket{remaining: 2, done: done}
+	w.finishTicket(1, 1)
+	select {
+	case <-done:
+		t.Fatal("done closed early")
+	default:
+	}
+	w.finishTicket(1, 1)
+	select {
+	case <-done:
+	default:
+		t.Fatal("done not closed")
+	}
+	if _, ok := w.tickets[1]; ok {
+		t.Fatal("ticket should be removed")
+	}
+}
+
+func TestHandoffEventsOverflowWhenBreakerOpen(t *testing.T) {
+	overflow := &mockOverflow{}
+	w := &BatchWriter{
+		cb:       NewCircuitBreaker(1, 30*time.Minute),
+		overflow: overflow,
+		m:        metrics.New(),
+		tickets:  make(map[uint64]*handoffTicket),
+	}
+	w.cb.RecordFailure()
+	events := []model.InferenceEvent{sampleEvent(), sampleEvent()}
+	w.handoffEvents(context.Background(), events, nil)
+	if overflow.pushed != 2 {
+		t.Fatalf("overflow pushed %d events, want 2", overflow.pushed)
+	}
+	if w.cb.State() != BreakerOpen {
+		t.Fatalf("breaker state = %v, want open", w.cb.State())
+	}
+}
+
+func TestAcceptEmptyReturnsNil(t *testing.T) {
+	w := &BatchWriter{tickets: make(map[uint64]*handoffTicket)}
+	if err := w.Accept(context.Background(), nil); err != nil {
+		t.Fatalf("Accept(nil): %v", err)
+	}
+}
