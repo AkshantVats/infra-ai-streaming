@@ -15,5 +15,8 @@ datasources:
     access: proxy
     url: http://clickhouse:8123
     jsonData:
+      host: clickhouse
+      port: 8123
+      protocol: http
       defaultDatabase: infra_ai
     editable: false
