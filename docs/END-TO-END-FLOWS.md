@@ -276,6 +276,43 @@ Implementation: `consumer/internal/kafka/reader.go`.
 
 ## Grafana dashboard guide
 
+### Which dashboard when
+
+| Goal | Dashboard | URL |
+|------|-------------|-----|
+| Debug compose, scrapes, breaker, overflow, DLQ, WAL | **Local E2E** | http://localhost:3000/d/ai-inference-e2e-local |
+| Tenant/model/cost SLOs for README and product narrative | **Product SLOs** | http://localhost:3000/d/ai-inference-product |
+
+Credentials: `admin` / `admin` (from `deploy/.env`).
+
+---
+
+### Product SLOs (`ai-inference-product`)
+
+| Field | Value |
+|-------|-------|
+| **Title** | AI Inference — Product SLOs |
+| **UID** | `ai-inference-product` |
+| **URL** | http://localhost:3000/d/ai-inference-product |
+| **Refresh** | 10s |
+| **Canonical JSON** | `dashboards/ai-inference-product.json` |
+| **Provisioned copy** | `deploy/grafana/provisioning/dashboards/ai-inference-product.json` |
+
+#### Panel reference
+
+| Panel | PromQL / query | Good | Bad | Proves |
+|-------|----------------|------|-----|--------|
+| **Ingest throughput by tenant** | `sum(rate(batch_size_events_sum[1m])) by (tenant_id)` | Series per tenant rise with traffic | Flat while posting `/ingest` | Accept path volume |
+| **P99 inference latency by model** | CH: `quantile(0.99)(latency_ms)` by `model_id` | Lines per model after CH has rows | Empty — consumer down or no ingest | Warehouse `latency_ms` (not HTTP histogram) |
+| **Cost per hour by tenant** | CH: `sum(cost_usd)` by `toStartOfHour(timestamp)`, `tenant_id` | Non-zero USD after billed events | Flat | Per-tenant cost accounting |
+| **Kafka consumer lag** | `sum(kafka_consumer_lag_events) by (topic)` | Near 0 at steady state | Sustained &gt; 10k warning | Backlog vs consumer |
+
+After multi-tenant ingest, open **Product SLOs** and confirm all four panels have data; use **Local E2E** if scrapes or breaker look wrong.
+
+---
+
+### Local E2E (`ai-inference-e2e-local`)
+
 | Field | Value |
 |-------|-------|
 | **Title** | AI Inference Observability — Local E2E |
@@ -284,9 +321,7 @@ Implementation: `consumer/internal/kafka/reader.go`.
 | **Refresh** | 10s |
 | **Source JSON** | `deploy/grafana/provisioning/dashboards/ai-inference-e2e.json` |
 
-Credentials: `admin` / `admin` (from `deploy/.env`).
-
-### Panel reference
+#### Panel reference
 
 | Panel | PromQL / query | Good | Bad | Proves step |
 |-------|----------------|------|-----|-------------|
@@ -320,7 +355,7 @@ cp deploy/.env.example deploy/.env   # once
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 ```
 
-Open Grafana: http://localhost:3000/d/ai-inference-e2e-local — confirm **Ingestion scrape UP** and **Consumer scrape UP** are green (after B and C).
+Open Grafana: http://localhost:3000/d/ai-inference-e2e-local — confirm **Ingestion scrape UP** and **Consumer scrape UP** are green (after B and C). For product panels, use http://localhost:3000/d/ai-inference-product after ingest.
 
 ### Terminal B — Go consumer
 

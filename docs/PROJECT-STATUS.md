@@ -23,7 +23,7 @@ This document states what exists in the repository today versus what is still de
 - **Integration / load tests in CI**: CI runs **Rust unit tests** only; compose E2E and `go test ./consumer/...` are local (`scripts/smoke-e2e.sh`).
 - **Partition key:** producer keys by `tenant_id` only; DESIGN target `hash(tenant_id:model_id)` not implemented.
 
-## E2E status (Day 5)
+## E2E status (Day 5–6)
 
 | Step | Status |
 |------|--------|
@@ -32,11 +32,13 @@ This document states what exists in the repository today versus what is still de
 | `curl /ingest` → 202 | Requires running ingestion binary |
 | ClickHouse `infra_ai.inference_events` rows with `cost_usd` | Requires running consumer + ingest |
 | Prometheus scrape ingestion `:8080` and consumer `:9091` | Compose + host binaries |
-| Grafana dashboard **AI Inference Observability — Local E2E** | Provisioned (`ai-inference-e2e-local`) |
+| Grafana **Local E2E** ops dashboard | Provisioned (`ai-inference-e2e-local`) |
+| Grafana **Product SLOs** dashboard (G-05) | Provisioned (`ai-inference-product`) — 4 panels: ingest eps, CH P99 by model, cost/hour, `kafka_consumer_lag_events` |
+| `kafka_consumer_lag_events` on consumer `:9091` | Implemented in Go reader |
 
 ## 3-step local demo (HTTP → Kafka → ClickHouse)
 
-1. **Stack:** `cp deploy/.env.example deploy/.env && docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d` — Grafana http://localhost:3000 (`admin`/`admin`) → **AI Inference Observability — Local E2E**.
+1. **Stack:** `cp deploy/.env.example deploy/.env && docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d` — Grafana http://localhost:3000 (`admin`/`admin`) → **Local E2E** (`/d/ai-inference-e2e-local`) or **Product SLOs** (`/d/ai-inference-product`).
 2. **Pipeline:** Terminal A — `cd consumer && set -a && source ../deploy/.env && set +a && go run ./cmd/consumer`. Terminal B — `set -a && source deploy/.env && set +a && cargo run -p ingestion`.
 3. **Proof:** `curl -X POST http://localhost:8080/ingest …` (see root `README.md`); ClickHouse — `SELECT count(), max(cost_usd) FROM infra_ai.inference_events`; Grafana consumer panels + Prometheus `up{job="consumer"}`.
 

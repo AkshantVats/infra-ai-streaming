@@ -22,6 +22,7 @@ Prometheus runs in Docker and scrapes the host via `host.docker.internal` (see `
 | `circuit_breaker_state{state}` | Gauge | `1` on active state (`closed`, `open`, `halfopen`) |
 | `redis_overflow_depth` | Gauge | Redis LIST length (`REDIS_OVERFLOW_KEY`) |
 | `dlq_events_total` | Counter | Events published to `ai_inference_dlq` |
+| `kafka_consumer_lag_events{topic,partition,group}` | Gauge | High watermark minus committed offset (events) per partition |
 
 ## Circuit breaker
 
@@ -38,9 +39,25 @@ Prometheus runs in Docker and scrapes the host via `host.docker.internal` (see `
 
 ## Grafana
 
-- Dashboard: **AI Inference Observability — Local E2E** (`uid: ai-inference-e2e-local`)
-- URL: http://localhost:3000/d/ai-inference-e2e-local (admin / admin by default)
-- Panels: scrape UP, consumer batch/flush, circuit breaker, overflow depth, DLQ, ClickHouse row count (when datasource is healthy).
+Two provisioned dashboards (see `dashboards/` for canonical JSON; mirrored under `deploy/grafana/provisioning/dashboards/`).
+
+| Dashboard | UID | URL | Use when |
+|-----------|-----|-----|----------|
+| **AI Inference Observability — Local E2E** | `ai-inference-e2e-local` | http://localhost:3000/d/ai-inference-e2e-local | Proving pipeline health (scrape UP, breaker, overflow, DLQ, WAL) |
+| **AI Inference — Product SLOs** | `ai-inference-product` | http://localhost:3000/d/ai-inference-product | Tenant throughput, inference P99 by model, cost/hour, consumer lag |
+
+Credentials: `admin` / `admin` (from `deploy/.env`).
+
+### Product SLO panels (G-05)
+
+| Panel | Source | Query |
+|-------|--------|-------|
+| Ingest throughput by tenant | Prometheus | `sum(rate(batch_size_events_sum[1m])) by (tenant_id)` |
+| P99 inference latency by model | ClickHouse | `quantile(0.99)(latency_ms)` on `infra_ai.inference_events` by `model_id` |
+| Cost per hour by tenant | ClickHouse | `sum(cost_usd)` by `toStartOfHour(timestamp)`, `tenant_id` |
+| Kafka consumer lag | Prometheus | `sum(kafka_consumer_lag_events) by (topic)` |
+
+**Note:** Panel 1 tracks **ingest accept**; panels 2–3 read **ClickHouse** after the consumer has written. Temporary skew is normal when lag is high.
 
 ## Useful queries
 
@@ -65,6 +82,13 @@ up{job="consumer"}
 redis_overflow_depth
 ```
 
+**Prometheus — consumer lag (events):**
+
+```promql
+sum(kafka_consumer_lag_events) by (topic)
+max(kafka_consumer_lag_events) by (partition)
+```
+
 ## SLO sketches (local dev)
 
 | SLO | PromQL (illustrative) |
@@ -73,6 +97,7 @@ redis_overflow_depth
 | Consumer available | `up{job="consumer"} == 1` |
 | Breaker rarely open | `avg_over_time(circuit_breaker_state{state="open"}[1h]) < 0.01` |
 | DLQ quiet | `rate(dlq_events_total[5m]) == 0` |
+| Consumer lag &lt; 50k events | `max(kafka_consumer_lag_events) < 50000` |
 
 ## Logs
 
