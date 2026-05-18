@@ -16,7 +16,10 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::kafka::ProduceMessage;
-use crate::metrics::{BACKPRESSURE_EVENTS_TOTAL, BATCH_SIZE_EVENTS, INGESTION_LATENCY_MS};
+use crate::metrics::{
+    BACKPRESSURE_EVENTS_TOTAL, BATCH_SIZE_EVENTS, INGESTION_LATENCY_MS,
+    INGESTION_VALIDATION_ERRORS_TOTAL,
+};
 use crate::rate_limit::{RateLimitResult, RateLimiter};
 use crate::wal::WalWriter;
 
@@ -72,7 +75,20 @@ pub enum ValidationError {
 }
 
 impl ValidationError {
+    fn metric_label(&self) -> &'static str {
+        match self {
+            ValidationError::EmptyBatch => "empty_batch",
+            ValidationError::BatchTooLarge { .. } => "batch_too_large",
+            ValidationError::InvalidLatency { .. } => "invalid_latency",
+            ValidationError::InvalidCost => "invalid_cost",
+            ValidationError::EventTooOld => "event_too_old",
+        }
+    }
+
     fn into_response(self) -> Response {
+        INGESTION_VALIDATION_ERRORS_TOTAL
+            .with_label_values(&[self.metric_label()])
+            .inc();
         let (status, body) = match self {
             ValidationError::EmptyBatch => (
                 StatusCode::BAD_REQUEST,

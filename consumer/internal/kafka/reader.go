@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
+	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/config"
@@ -21,10 +23,11 @@ type EventSink interface {
 
 // Reader consumes batched inference events from Kafka and forwards them to the sink.
 type Reader struct {
-	client *kgo.Client
-	topic  string
-	sink   EventSink
-	m      *metrics.M
+	client  *kgo.Client
+	topic   string
+	groupID string
+	sink    EventSink
+	m       *metrics.M
 }
 
 // NewReader builds a franz-go consumer for the configured topic and group.
@@ -45,7 +48,13 @@ func NewReader(cfg config.Config, sink EventSink, m *metrics.M) (*Reader, error)
 		return nil, fmt.Errorf("create kafka client: %w", err)
 	}
 
-	return &Reader{client: cl, topic: cfg.KafkaTopic, sink: sink, m: m}, nil
+	return &Reader{
+		client:  cl,
+		topic:   cfg.KafkaTopic,
+		groupID: cfg.KafkaGroupID,
+		sink:    sink,
+		m:       m,
+	}, nil
 }
 
 // Run polls records until ctx is cancelled.
@@ -75,6 +84,11 @@ func (r *Reader) Run(ctx context.Context) error {
 		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
 			for _, rec := range p.Records {
 				if err := r.handleRecord(ctx, rec); err != nil {
+					if isDeserializeErr(err) {
+						r.m.KafkaDeserializationErrors.Inc()
+					} else {
+						r.m.KafkaRecordHandoffErrors.Inc()
+					}
 					log.Printf("level=error msg=record_failed topic=%s partition=%d offset=%d err=%v",
 						rec.Topic, rec.Partition, rec.Offset, err)
 					continue
@@ -87,7 +101,47 @@ func (r *Reader) Run(ctx context.Context) error {
 				log.Printf("level=error msg=commit_failed count=%d err=%v", len(toCommit), err)
 			}
 		}
+
+		if err := r.reportConsumerLag(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("level=warn msg=lag_update_failed err=%v", err)
+		}
 	}
+}
+
+func (r *Reader) reportConsumerLag(ctx context.Context) error {
+	adm := kadm.NewClient(r.client)
+
+	ends, err := adm.ListEndOffsets(ctx, r.topic)
+	if err != nil {
+		return fmt.Errorf("list end offsets: %w", err)
+	}
+
+	committed, err := adm.FetchOffsetsForTopics(ctx, r.groupID, r.topic)
+	if err != nil {
+		return fmt.Errorf("fetch committed offsets: %w", err)
+	}
+
+	parts := ends[r.topic]
+	for part, endOff := range parts {
+		if endOff.Err != nil {
+			continue
+		}
+		commOff, ok := committed.Lookup(r.topic, part)
+		if !ok || commOff.Err != nil {
+			continue
+		}
+		lag := metrics.PartitionLag(endOff.Offset, commOff.At)
+		r.m.KafkaConsumerLagEvents.WithLabelValues(
+			r.topic,
+			strconv.Itoa(int(part)),
+			r.groupID,
+		).Set(lag)
+	}
+	return nil
+}
+
+func isDeserializeErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "unmarshal ingest batch")
 }
 
 func (r *Reader) handleRecord(ctx context.Context, rec *kgo.Record) error {

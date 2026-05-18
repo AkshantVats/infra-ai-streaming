@@ -2,6 +2,8 @@
 
 Local E2E stack: **Prometheus** (`:9090`), **Grafana** (`:3000`), **ClickHouse** (`:8123`), plus host-run **ingestion** (`:8080/metrics`) and **consumer** (`:9091/metrics`).
 
+**Canonical mapping** (metrics ↔ dashboards ↔ source files): [docs/ARCHITECTURE-AND-FLOWS.md](docs/ARCHITECTURE-AND-FLOWS.md#6-observability-matrix). Runnable scenarios: [docs/END-TO-END-FLOWS.md](docs/END-TO-END-FLOWS.md), `./scripts/demo-flows.sh`.
+
 ## Metrics endpoints
 
 | Service   | Port | Path      | Scrape job (Prometheus) |
@@ -11,17 +13,33 @@ Local E2E stack: **Prometheus** (`:9090`), **Grafana** (`:3000`), **ClickHouse**
 
 Prometheus runs in Docker and scrapes the host via `host.docker.internal` (see `deploy/prometheus/prometheus.yml`).
 
-## Consumer metrics (Day 5)
+## Ingestion metrics
+
+| Metric | Type | Meaning |
+|--------|------|---------|
+| `ingestion_latency_ms{tenant_id,status}` | Histogram | HTTP handler latency (success path) |
+| `batch_size_events{tenant_id}` | Histogram | Events per accepted batch |
+| `rate_limited_requests_total{tenant_id}` | Counter | HTTP 429 rate-limit denials |
+| `backpressure_events_total` | Counter | HTTP 503 when internal channel full |
+| `ingestion_validation_errors_total{error}` | Counter | HTTP 400 validation (`empty_batch`, `invalid_cost`, …) |
+| `kafka_produce_errors_total{tenant_id,error_type}` | Counter | Produce exhausted retries (DLQ attempted) |
+| `wal_segments_pending` | Gauge | WAL segments with unacked entries |
+| `wal_replay_events_total` | Counter | Events replayed from WAL on startup |
+
+## Consumer metrics (Day 5–6)
 
 | Metric | Type | Meaning |
 |--------|------|---------|
 | `kafka_records_processed_total` | Counter | Kafka records handed off after CH / overflow / DLQ |
+| `kafka_deserialization_errors_total` | Counter | Bad JSON on topic; offset **not** committed |
+| `kafka_record_handoff_errors_total` | Counter | `Accept` failed; offset **not** committed |
 | `clickhouse_write_errors_total` | Counter | Failed CH batch inserts (before overflow/DLQ) |
 | `clickhouse_batch_size` | Histogram | Events per successful CH insert |
 | `clickhouse_flush_duration_seconds` | Histogram | Wall time per CH flush attempt |
 | `circuit_breaker_state{state}` | Gauge | `1` on active state (`closed`, `open`, `halfopen`) |
 | `redis_overflow_depth` | Gauge | Redis LIST length (`REDIS_OVERFLOW_KEY`) |
 | `dlq_events_total` | Counter | Events published to `ai_inference_dlq` |
+| `kafka_consumer_lag_events{topic,partition,group}` | Gauge | High watermark minus committed offset (events) per partition |
 
 ## Circuit breaker
 
@@ -38,9 +56,25 @@ Prometheus runs in Docker and scrapes the host via `host.docker.internal` (see `
 
 ## Grafana
 
-- Dashboard: **AI Inference Observability — Local E2E** (`uid: ai-inference-e2e-local`)
-- URL: http://localhost:3000/d/ai-inference-e2e-local (admin / admin by default)
-- Panels: scrape UP, consumer batch/flush, circuit breaker, overflow depth, DLQ, ClickHouse row count (when datasource is healthy).
+Two provisioned dashboards (see `dashboards/` for canonical JSON; mirrored under `deploy/grafana/provisioning/dashboards/`).
+
+| Dashboard | UID | URL | Use when |
+|-----------|-----|-----|----------|
+| **AI Inference Observability — Local E2E** | `ai-inference-e2e-local` | http://localhost:3000/d/ai-inference-e2e-local | Proving pipeline health (scrape UP, breaker, overflow, DLQ, WAL) |
+| **AI Inference — Product SLOs** | `ai-inference-product` | http://localhost:3000/d/ai-inference-product | Tenant throughput, inference P99 by model, cost/hour, consumer lag |
+
+Credentials: `admin` / `admin` (from `deploy/.env`).
+
+### Product SLO panels (G-05)
+
+| Panel | Source | Query |
+|-------|--------|-------|
+| Ingest throughput by tenant | Prometheus | `sum(rate(batch_size_events_sum[1m])) by (tenant_id)` |
+| P99 inference latency by model | ClickHouse | `quantile(0.99)(latency_ms)` on `infra_ai.inference_events` by `model_id` |
+| Cost per hour by tenant | ClickHouse | `sum(cost_usd)` by `toStartOfHour(timestamp)`, `tenant_id` |
+| Kafka consumer lag | Prometheus | `sum(kafka_consumer_lag_events) by (topic)` |
+
+**Note:** Panel 1 tracks **ingest accept**; panels 2–3 read **ClickHouse** after the consumer has written. Temporary skew is normal when lag is high.
 
 ## Useful queries
 
@@ -65,6 +99,13 @@ up{job="consumer"}
 redis_overflow_depth
 ```
 
+**Prometheus — consumer lag (events):**
+
+```promql
+sum(kafka_consumer_lag_events) by (topic)
+max(kafka_consumer_lag_events) by (partition)
+```
+
 ## SLO sketches (local dev)
 
 | SLO | PromQL (illustrative) |
@@ -73,6 +114,11 @@ redis_overflow_depth
 | Consumer available | `up{job="consumer"} == 1` |
 | Breaker rarely open | `avg_over_time(circuit_breaker_state{state="open"}[1h]) < 0.01` |
 | DLQ quiet | `rate(dlq_events_total[5m]) == 0` |
+| Consumer lag &lt; 50k events | `max(kafka_consumer_lag_events) < 50000` |
+
+## Troubleshooting
+
+See [docs/ARCHITECTURE-AND-FLOWS.md#8-troubleshooting](docs/ARCHITECTURE-AND-FLOWS.md#8-troubleshooting) for scrape failures, stuck partitions, empty Grafana CH panels, and breaker/overflow behavior.
 
 ## Logs
 
