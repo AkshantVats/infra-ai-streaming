@@ -15,6 +15,8 @@ go run ./cmd/consumer
 
 Metrics: http://localhost:9091/metrics
 
+Key gauges: `kafka_consumer_lag_events{topic,partition,group}` (updated each poll cycle), `redis_overflow_depth`, `circuit_breaker_state{state}`.
+
 ## Configuration
 
 | Variable | Default | Description |

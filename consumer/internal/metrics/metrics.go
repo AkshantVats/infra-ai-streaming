@@ -14,6 +14,7 @@ type M struct {
 	CircuitBreakerState   *prometheus.GaugeVec
 	RedisOverflowDepth    prometheus.Gauge
 	DLQEvents             prometheus.Counter
+	KafkaConsumerLagEvents *prometheus.GaugeVec
 }
 
 // New registers metrics with the default registry.
@@ -49,7 +50,20 @@ func New() *M {
 			Name: "dlq_events_total",
 			Help: "Events sent to ai_inference_dlq after insert retries exhausted.",
 		}),
+		KafkaConsumerLagEvents: promauto.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "kafka_consumer_lag_events",
+			Help: "Approximate unconsumed events (high watermark minus committed offset) per partition.",
+		}, []string{"topic", "partition", "group"}),
 	}
+}
+
+// PartitionLag returns endOffset - committedOffset, floored at zero.
+func PartitionLag(endOffset, committedOffset int64) float64 {
+	lag := endOffset - committedOffset
+	if lag < 0 {
+		return 0
+	}
+	return float64(lag)
 }
 
 // SetBreakerState sets exactly one of closed|open|halfopen to 1.
