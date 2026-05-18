@@ -55,6 +55,13 @@ lazy_static! {
         "Requests rejected due to full internal channel (backpressure)",
     )
     .expect("register backpressure_events_total");
+
+    pub static ref INGESTION_VALIDATION_ERRORS_TOTAL: IntCounterVec = register_int_counter_vec!(
+        "ingestion_validation_errors_total",
+        "Ingest requests rejected by schema validation",
+        &["error"],
+    )
+    .expect("register ingestion_validation_errors_total");
 }
 
 /// Prometheus exposition format for `GET /metrics`.

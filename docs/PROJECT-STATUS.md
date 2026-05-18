@@ -14,6 +14,7 @@ This document states what exists in the repository today versus what is still de
 - **Redis rate limiting**: Per-tenant token bucket on ingest (fail-open when Redis is unavailable, per design).
 - **Go consumer** (`consumer/`): franz-go reader → ClickHouse **BatchWriter** (1000 events / 500ms), **circuit breaker**, **Redis overflow**, **DLQ** (`ai_inference_dlq`), Prometheus on **`:9091`**. Unit tests for JSON, breaker, row mapping.
 - **OBSERVABILITY.md**: Metrics catalog, SLO sketches, ClickHouse verification queries.
+- **docs/ARCHITECTURE-AND-FLOWS.md**: Architecture, G-01..G-05 status, code walkthrough, lifecycle paths, dual-dashboard observability matrix, troubleshooting.
 - **Local dependency stack**: Docker Compose runs **Redis**, **Redpanda**, **ClickHouse**, **Prometheus**, **Grafana**, plus one-shot **redpanda-init** (topics) and **clickhouse-init** (DDL). See [deploy/README.md](../deploy/README.md) for ports.
 
 ## Not production-complete yet (gaps)
@@ -48,5 +49,6 @@ Or: `./scripts/smoke-e2e.sh` (compose + tests; ingest + CH check if services are
 
 - For **local development**, see [dev-macos.md](dev-macos.md) and [../deploy/docker-compose.yml](../deploy/docker-compose.yml). Compose services use `env_file: .env` under `deploy/` — copy [../deploy/.env.example](../deploy/.env.example) to `deploy/.env` first.
 - For **observability**, see [../OBSERVABILITY.md](../OBSERVABILITY.md).
-- For **E2E flows, Grafana panel guide, and demo scenarios**, see [END-TO-END-FLOWS.md](END-TO-END-FLOWS.md).
+- For **architecture and observability mapping**, see [ARCHITECTURE-AND-FLOWS.md](ARCHITECTURE-AND-FLOWS.md).
+- For **E2E flows, Grafana panel guide, and demo scenarios**, see [END-TO-END-FLOWS.md](END-TO-END-FLOWS.md) and `./scripts/demo-flows.sh`.
 - For **contributing** (tests, compose, PR expectations), see [../CONTRIBUTING.md](../CONTRIBUTING.md).

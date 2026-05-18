@@ -2,7 +2,7 @@
 
 **Sub-100ms AI inference observability at 1M events/min — Kafka-backed, ClickHouse-native, multi-tenant.**
 
-**Honest status:** the repo ships a tested **Rust ingestion library** and **runnable `ingestion` binary**, a **Go consumer** (Kafka → ClickHouse batch writer, circuit breaker, Redis overflow, DLQ), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). See [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) and [OBSERVABILITY.md](OBSERVABILITY.md). Build plan: [docs/7-day-plan.md](docs/7-day-plan.md).
+**Honest status:** the repo ships a tested **Rust ingestion library** and **runnable `ingestion` binary**, a **Go consumer** (Kafka → ClickHouse batch writer, circuit breaker, Redis overflow, DLQ), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). See [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md), **[docs/ARCHITECTURE-AND-FLOWS.md](docs/ARCHITECTURE-AND-FLOWS.md)** (architecture, lifecycles, observability matrix), and [OBSERVABILITY.md](OBSERVABILITY.md). Build plan: [docs/7-day-plan.md](docs/7-day-plan.md).
 
 [![CI](https://github.com/AkshantVats/infra-ai-streaming/actions/workflows/ci.yml/badge.svg)](https://github.com/AkshantVats/infra-ai-streaming/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -188,7 +188,11 @@ cd infra-ai-streaming
 | **AI Inference — Product SLOs** | http://localhost:3000/d/ai-inference-product | Tenant ingest rate, inference P99 by `model_id`, USD/hour, Kafka lag |
 | **AI Inference Observability — Local E2E** | http://localhost:3000/d/ai-inference-e2e-local | Scrape health, breaker, overflow, DLQ, WAL |
 
-Login: `admin` / `admin`. Canonical JSON: [`dashboards/`](dashboards/). Details: [OBSERVABILITY.md](OBSERVABILITY.md), [docs/END-TO-END-FLOWS.md](docs/END-TO-END-FLOWS.md).
+Login: `admin` / `admin`. Canonical JSON: [`dashboards/`](dashboards/). Details: [OBSERVABILITY.md](OBSERVABILITY.md), [docs/ARCHITECTURE-AND-FLOWS.md](docs/ARCHITECTURE-AND-FLOWS.md), [docs/END-TO-END-FLOWS.md](docs/END-TO-END-FLOWS.md), `./scripts/demo-flows.sh`.
+
+### Troubleshooting
+
+Scrape failures, stuck Kafka offsets, empty ClickHouse Grafana panels, breaker/overflow: [docs/ARCHITECTURE-AND-FLOWS.md#8-troubleshooting](docs/ARCHITECTURE-AND-FLOWS.md#8-troubleshooting).
 
 <!-- After smoke ingest, capture http://localhost:3000/d/ai-inference-product → docs/screenshots/grafana-product-slo.png -->
 <!-- ![Grafana Product SLO dashboard](docs/screenshots/grafana-product-slo.png) -->
@@ -240,7 +244,7 @@ infra-ai-streaming/
 ├── dashboards/         # Grafana JSON exports
 ├── load-test/          # k6 scripts
 ├── chaos/              # scripted failure injections
-└── docs/               # DESIGN.md, OBSERVABILITY.md, CHAOS.md, BENCHMARKS.md
+└── docs/               # ARCHITECTURE-AND-FLOWS.md, END-TO-END-FLOWS.md, PROJECT-STATUS.md
 ```
 
 ---

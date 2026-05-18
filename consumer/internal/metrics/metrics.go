@@ -14,7 +14,9 @@ type M struct {
 	CircuitBreakerState   *prometheus.GaugeVec
 	RedisOverflowDepth    prometheus.Gauge
 	DLQEvents             prometheus.Counter
-	KafkaConsumerLagEvents *prometheus.GaugeVec
+	KafkaConsumerLagEvents        *prometheus.GaugeVec
+	KafkaDeserializationErrors    prometheus.Counter
+	KafkaRecordHandoffErrors      prometheus.Counter
 }
 
 // New registers metrics with the default registry.
@@ -54,6 +56,14 @@ func New() *M {
 			Name: "kafka_consumer_lag_events",
 			Help: "Approximate unconsumed events (high watermark minus committed offset) per partition.",
 		}, []string{"topic", "partition", "group"}),
+		KafkaDeserializationErrors: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "kafka_deserialization_errors_total",
+			Help: "Kafka records that failed JSON batch deserialization (offset not committed).",
+		}),
+		KafkaRecordHandoffErrors: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "kafka_record_handoff_errors_total",
+			Help: "Kafka records where sink.Accept failed (offset not committed).",
+		}),
 	}
 }
 

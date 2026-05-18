@@ -33,6 +33,9 @@ Commands:
   invalid-json      Produce garbage to ai_inference_events (offset stuck)
   rate-limit        Hammer /ingest to trigger 429 (lower RATE_LIMIT_DEFAULT_RPS first)
   burst             Send N parallel ingest requests (default N=50)
+  validation-error  POST invalid batch (empty events) → 400 + validation metric
+  timeout-event     POST event with status=timeout (still 202; CH stores status)
+  recovery-hint     Print WAL metrics + restart instructions for replay path
   metrics-snapshot  Curl Prometheus-oriented metrics from both services
   help              This message
 
@@ -190,11 +193,45 @@ cmd_burst() {
   echo "Grafana: Kafka handoff rate spike | flush latency p99 may wiggle"
 }
 
+cmd_validation_error() {
+  require_ingest
+  code="$(curl -sS -o /dev/null -w "%{http_code}" -X POST "${INGEST_URL}/ingest" \
+    -H 'Content-Type: application/json' -H "X-Tenant-ID: ${TENANT}" \
+    -d '{"events":[]}')"
+  echo "POST empty batch → HTTP ${code} (expect 400)"
+  curl -sf "$METRICS_INGEST" 2>/dev/null | grep ingestion_validation_errors_total || true
+  echo ""
+  echo "Grafana (e2e): Errors & rejections — add query rate(ingestion_validation_errors_total[5m]) if needed"
+}
+
+cmd_timeout_event() {
+  require_ingest
+  require_consumer_metrics
+  ts_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
+  curl -sS -X POST "${INGEST_URL}/ingest" \
+    -H 'Content-Type: application/json' -H "X-Tenant-ID: ${TENANT}" \
+    -d "{\"events\":[{\"tenant_id\":\"${TENANT}\",\"model_id\":\"gpt-4o\",\"timestamp_unix_ms\":${ts_ms},\"latency_ms\":9000,\"prompt_tokens\":1,\"completion_tokens\":1,\"cost_usd\":0.001,\"status\":\"timeout\"}]}"
+  sleep 3
+  echo "--- ClickHouse status column ---"
+  "${COMPOSE[@]}" exec -T clickhouse clickhouse-client --query \
+    "SELECT status, latency_ms FROM infra_ai.inference_events WHERE tenant_id='${TENANT}' ORDER BY timestamp DESC LIMIT 3" 2>/dev/null || true
+  echo ""
+  echo "Grafana (product): P99 by model includes timeout latency_ms after flush"
+}
+
+cmd_recovery_hint() {
+  echo "WAL recovery path (ingestion restart replays unacked WAL → Kafka):"
+  curl -sf "$METRICS_INGEST" 2>/dev/null | grep -E 'wal_segments_pending|wal_replay_events_total' || echo "(ingestion not up)"
+  echo ""
+  echo "Steps: stop ingestion (Ctrl+C), optionally: docker compose stop redpanda (simulate broker outage),"
+  echo "  ingest while down (WAL grows), start redpanda + restart ingestion — watch wal_replay_events_total spike."
+}
+
 cmd_metrics_snapshot() {
   echo "=== ingestion ==="
-  curl -sf "$METRICS_INGEST" 2>/dev/null | grep -E 'ingestion_latency|wal_|rate_limited|backpressure|kafka_produce' | head -20 || echo "(ingestion not up)"
+  curl -sf "$METRICS_INGEST" 2>/dev/null | grep -E 'ingestion_latency|wal_|rate_limited|backpressure|validation|kafka_produce' | head -25 || echo "(ingestion not up)"
   echo "=== consumer ==="
-  curl -sf "$METRICS_CONSUMER" 2>/dev/null | grep -E 'kafka_records|clickhouse_|circuit_breaker|redis_overflow|dlq_' || echo "(consumer not up)"
+  curl -sf "$METRICS_CONSUMER" 2>/dev/null | grep -E 'kafka_records|kafka_deserialization|kafka_record_handoff|clickhouse_|circuit_breaker|redis_overflow|dlq_|kafka_consumer_lag' || echo "(consumer not up)"
 }
 
 case "${1:-help}" in
@@ -207,6 +244,9 @@ case "${1:-help}" in
   invalid-json) cmd_invalid_json ;;
   rate-limit) cmd_rate_limit ;;
   burst) cmd_burst ;;
+  validation-error) cmd_validation_error ;;
+  timeout-event) cmd_timeout_event ;;
+  recovery-hint) cmd_recovery_hint ;;
   metrics-snapshot) cmd_metrics_snapshot ;;
   help|-h|--help) usage ;;
   *)

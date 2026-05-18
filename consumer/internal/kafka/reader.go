@@ -84,6 +84,11 @@ func (r *Reader) Run(ctx context.Context) error {
 		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
 			for _, rec := range p.Records {
 				if err := r.handleRecord(ctx, rec); err != nil {
+					if isDeserializeErr(err) {
+						r.m.KafkaDeserializationErrors.Inc()
+					} else {
+						r.m.KafkaRecordHandoffErrors.Inc()
+					}
 					log.Printf("level=error msg=record_failed topic=%s partition=%d offset=%d err=%v",
 						rec.Topic, rec.Partition, rec.Offset, err)
 					continue
@@ -133,6 +138,10 @@ func (r *Reader) reportConsumerLag(ctx context.Context) error {
 		).Set(lag)
 	}
 	return nil
+}
+
+func isDeserializeErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "unmarshal ingest batch")
 }
 
 func (r *Reader) handleRecord(ctx context.Context, rec *kgo.Record) error {

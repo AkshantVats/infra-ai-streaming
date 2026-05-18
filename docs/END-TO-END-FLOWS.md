@@ -1,6 +1,8 @@
 # End-to-end flows — infra-ai-streaming (Days 0–5)
 
-Onboarding guide for the local pipeline: **HTTP ingest (Rust) → WAL → Kafka → Go consumer → ClickHouse**, with **Redis** (rate limits + overflow), **DLQ**, and **Prometheus/Grafana** proof. Metric names match code; dashboard UID is **`ai-inference-e2e-local`**.
+Onboarding guide for the local pipeline: **HTTP ingest (Rust) → WAL → Kafka → Go consumer → ClickHouse**, with **Redis** (rate limits + overflow), **DLQ**, and **Prometheus/Grafana** proof. Metric names match code; dashboard UIDs: **`ai-inference-e2e-local`**, **`ai-inference-product`**.
+
+**Full architecture, lifecycle tables, and observability matrix:** [ARCHITECTURE-AND-FLOWS.md](ARCHITECTURE-AND-FLOWS.md).
 
 Related: [OBSERVABILITY.md](../OBSERVABILITY.md) (metric catalog, SLO sketches), [DESIGN.md](../DESIGN.md) (CAP, backpressure, failure matrix), [PROJECT-STATUS.md](PROJECT-STATUS.md) (what ships today).
 
@@ -230,7 +232,7 @@ DLQ message shape (`consumer/internal/kafka/dlq.go`): `{ "event", "error", "retr
 1. `DeserializeBatch` returns error.
 2. `handleRecord` logs `record_failed` — record **not** included in `CommitRecords`.
 3. Offset **does not advance** → partition stalls on poison message until skipped manually.
-4. `kafka_records_processed_total` does **not** increase for that record.
+4. `kafka_records_processed_total` does **not** increase; `kafka_deserialization_errors_total` increments.
 
 **Demo:** `./scripts/demo-flows.sh invalid-json`.
 
@@ -402,6 +404,9 @@ Script: **`./scripts/demo-flows.sh <command>`** (chmod +x once).
 | `invalid-json` | `rpk topic produce` garbage | Handoff flat; consumer `record_failed` logs |
 | `rate-limit` | Many rapid POSTs | **Errors & rejections** → `rate_limited_requests_total` |
 | `burst` | `BURST_N` parallel POSTs (default 50) | Handoff rate spike; flush p99 may move |
+| `validation-error` | POST `{"events":[]}` | HTTP 400; `ingestion_validation_errors_total` |
+| `timeout-event` | POST `status: timeout` | Product P99 / CH `status` column |
+| `recovery-hint` | WAL metric snapshot + steps | `wal_replay_events_total` after restart |
 | `metrics-snapshot` | Print key lines from `:8080` and `:9091` | CLI alternative to Grafana |
 
 ### Unit tests (no Docker required for logic)
@@ -420,7 +425,11 @@ Added coverage: `writer_handoff_test.go` (ticket completion, overflow when break
 | Happy path | `happy-path` | `kafka_records_processed_total`, CH table | Yes, after CH insert |
 | CH down / breaker | `circuit-breaker` | `circuit_breaker_state`, `redis_overflow_depth` | Yes, after overflow |
 | DLQ | `dlq-path` | `dlq_events_total` | Yes, after DLQ publish |
-| Bad JSON | `invalid-json` | (none on handoff counter) | No |
+| Bad JSON | `invalid-json` | `kafka_deserialization_errors_total` | No |
+| Handoff error | Rare `Accept` fail | `kafka_record_handoff_errors_total` | No |
+| Validation | `validation-error` | `ingestion_validation_errors_total` | N/A |
+| Timeout status field | `timeout-event` | CH `status`, product P99 | Yes (normal path) |
+| WAL recovery | `recovery-hint` | `wal_replay_events_total` | N/A |
 | Rate limit | `rate-limit` | `rate_limited_requests_total` | N/A (never enqueued) |
 | Backpressure | Manual / tiny channel | `backpressure_events_total` | N/A |
 
@@ -428,6 +437,7 @@ Added coverage: `writer_handoff_test.go` (ticket completion, overflow when break
 
 ## See also
 
+- [ARCHITECTURE-AND-FLOWS.md](ARCHITECTURE-AND-FLOWS.md) — component diagram, implementation status, observability matrix, troubleshooting
 - [OBSERVABILITY.md](../OBSERVABILITY.md) — endpoints, SLO PromQL, log keys
 - [consumer/README.md](../consumer/README.md) — consumer env vars
 - [deploy/README.md](../deploy/README.md) — ports and compose services

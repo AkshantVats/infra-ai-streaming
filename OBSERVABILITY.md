@@ -2,6 +2,8 @@
 
 Local E2E stack: **Prometheus** (`:9090`), **Grafana** (`:3000`), **ClickHouse** (`:8123`), plus host-run **ingestion** (`:8080/metrics`) and **consumer** (`:9091/metrics`).
 
+**Canonical mapping** (metrics ↔ dashboards ↔ source files): [docs/ARCHITECTURE-AND-FLOWS.md](docs/ARCHITECTURE-AND-FLOWS.md#6-observability-matrix). Runnable scenarios: [docs/END-TO-END-FLOWS.md](docs/END-TO-END-FLOWS.md), `./scripts/demo-flows.sh`.
+
 ## Metrics endpoints
 
 | Service   | Port | Path      | Scrape job (Prometheus) |
@@ -11,11 +13,26 @@ Local E2E stack: **Prometheus** (`:9090`), **Grafana** (`:3000`), **ClickHouse**
 
 Prometheus runs in Docker and scrapes the host via `host.docker.internal` (see `deploy/prometheus/prometheus.yml`).
 
-## Consumer metrics (Day 5)
+## Ingestion metrics
+
+| Metric | Type | Meaning |
+|--------|------|---------|
+| `ingestion_latency_ms{tenant_id,status}` | Histogram | HTTP handler latency (success path) |
+| `batch_size_events{tenant_id}` | Histogram | Events per accepted batch |
+| `rate_limited_requests_total{tenant_id}` | Counter | HTTP 429 rate-limit denials |
+| `backpressure_events_total` | Counter | HTTP 503 when internal channel full |
+| `ingestion_validation_errors_total{error}` | Counter | HTTP 400 validation (`empty_batch`, `invalid_cost`, …) |
+| `kafka_produce_errors_total{tenant_id,error_type}` | Counter | Produce exhausted retries (DLQ attempted) |
+| `wal_segments_pending` | Gauge | WAL segments with unacked entries |
+| `wal_replay_events_total` | Counter | Events replayed from WAL on startup |
+
+## Consumer metrics (Day 5–6)
 
 | Metric | Type | Meaning |
 |--------|------|---------|
 | `kafka_records_processed_total` | Counter | Kafka records handed off after CH / overflow / DLQ |
+| `kafka_deserialization_errors_total` | Counter | Bad JSON on topic; offset **not** committed |
+| `kafka_record_handoff_errors_total` | Counter | `Accept` failed; offset **not** committed |
 | `clickhouse_write_errors_total` | Counter | Failed CH batch inserts (before overflow/DLQ) |
 | `clickhouse_batch_size` | Histogram | Events per successful CH insert |
 | `clickhouse_flush_duration_seconds` | Histogram | Wall time per CH flush attempt |
@@ -98,6 +115,10 @@ max(kafka_consumer_lag_events) by (partition)
 | Breaker rarely open | `avg_over_time(circuit_breaker_state{state="open"}[1h]) < 0.01` |
 | DLQ quiet | `rate(dlq_events_total[5m]) == 0` |
 | Consumer lag &lt; 50k events | `max(kafka_consumer_lag_events) < 50000` |
+
+## Troubleshooting
+
+See [docs/ARCHITECTURE-AND-FLOWS.md#8-troubleshooting](docs/ARCHITECTURE-AND-FLOWS.md#8-troubleshooting) for scrape failures, stuck partitions, empty Grafana CH panels, and breaker/overflow behavior.
 
 ## Logs
 
