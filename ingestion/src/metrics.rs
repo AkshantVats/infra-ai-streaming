@@ -62,6 +62,12 @@ lazy_static! {
         &["error"],
     )
     .expect("register ingestion_validation_errors_total");
+
+    pub static ref REDIS_RATE_LIMIT_DEGRADED: IntCounter = register_int_counter!(
+        "redis_rate_limit_degraded_total",
+        "Rate limit checks that fell back to fail-open due to Redis unavailability",
+    )
+    .expect("register redis_rate_limit_degraded_total");
 }
 
 /// Prometheus exposition format for `GET /metrics`.

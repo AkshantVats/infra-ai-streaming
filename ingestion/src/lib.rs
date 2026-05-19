@@ -11,5 +11,5 @@ pub mod wal;
 pub use config::Config;
 pub use kafka::{KafkaProducer, ProduceMessage};
 pub use metrics::gather_metrics;
-pub use rate_limit::{RateLimitResult, RateLimiter};
+pub use rate_limit::{RateLimitResult, RateLimiter, TenantLimitsConfig};
 pub use wal::{WalEntry, WalWriter};

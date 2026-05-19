@@ -7,7 +7,7 @@ use bytes::Bytes;
 use ingestion::{
     handlers::{tenant_from_events_json, AppState},
     kafka::{KafkaProducer, ProduceMessage},
-    rate_limit::RateLimiter,
+    rate_limit::{RateLimiter, TenantLimitsConfig},
     server, Config, WalEntry, WalWriter,
 };
 use tracing_subscriber::EnvFilter;
@@ -62,13 +62,28 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let tenant_limits = match &config.tenant_limits_path {
+        Some(path) => {
+            let cfg = TenantLimitsConfig::from_file(std::path::Path::new(path))
+                .with_context(|| format!("load tenant limits from {path}"))?;
+            tracing::info!(path = %path, "loaded per-tenant rate limits from file");
+            cfg
+        }
+        None => {
+            tracing::info!(
+                default_rps = config.rate_limit_default_rps,
+                burst = config.rate_limit_burst_multiplier,
+                "no TENANT_LIMITS_PATH; using global defaults for all tenants"
+            );
+            TenantLimitsConfig::from_defaults(
+                config.rate_limit_default_rps,
+                config.rate_limit_burst_multiplier,
+            )
+        }
+    };
+
     let rate_limiter = Arc::new(
-        RateLimiter::new(
-            &config.redis_url,
-            config.rate_limit_default_rps,
-            config.rate_limit_burst_multiplier,
-        )
-        .context("init rate limiter")?,
+        RateLimiter::new(&config.redis_url, tenant_limits).context("init rate limiter")?,
     );
 
     let state = AppState {

@@ -17,6 +17,10 @@ pub struct Config {
     pub wal_dir: String,
     pub rate_limit_default_rps: u32,
     pub rate_limit_burst_multiplier: f32,
+    /// Optional path to a JSON file with per-tenant rate limits.
+    /// When set, per-tenant `max_events_per_sec` / `burst_multiplier` override
+    /// the global defaults. See `deploy/tenant-limits.example.json`.
+    pub tenant_limits_path: Option<String>,
     /// Bounded channel between HTTP handlers and Kafka drain task (see DESIGN.md §4).
     pub batch_channel_capacity: usize,
     pub max_batch_size: usize,
@@ -89,6 +93,9 @@ impl Config {
             "MAX_CONCURRENT_REQUESTS",
             &env_var("MAX_CONCURRENT_REQUESTS", "1000")?,
         )?;
+        let tenant_limits_path = std::env::var("TENANT_LIMITS_PATH")
+            .ok()
+            .filter(|v| !v.is_empty());
 
         Ok(Self {
             kafka_brokers,
@@ -99,6 +106,7 @@ impl Config {
             wal_dir,
             rate_limit_default_rps,
             rate_limit_burst_multiplier,
+            tenant_limits_path,
             batch_channel_capacity,
             max_batch_size,
             max_event_age_ms,

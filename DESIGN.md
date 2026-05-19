@@ -86,6 +86,8 @@
 
 ## 5. Failure modes and recovery
 
+> **Runbook with local reproduction steps:** [CHAOS.md](CHAOS.md) — five scenarios with demo commands, Grafana panels, and expected metrics.
+
 | # | Scenario | What happens | Recovery | Data loss guarantee |
 |---|----------|----------------|----------|---------------------|
 | 1 | **Kafka broker dies mid-ingest** | Producer errors; accepted batches may sit in **WAL** and memory buffers | Retry with backoff; WAL **replay** on restart until Kafka ACKs | **No loss** for WAL-fsynced entries under the chosen produce-ack policy |
@@ -143,6 +145,13 @@ The `ingestion` binary implements §2–§4 at a first milestone:
 - **DLQ:** **3** insert retries per batch, then per-event publish to `ai_inference_dlq`.
 - **Offsets:** commit only after CH insert, overflow push, or DLQ handoff for all events in the Kafka record.
 - **Metrics:** consumer HTTP **`METRICS_PORT` (default 9091)** — `clickhouse_*`, `circuit_breaker_state`, `redis_overflow_depth`, `dlq_events_total`. See [OBSERVABILITY.md](OBSERVABILITY.md).
+
+## Appendix — Day 7 milestone (per-tenant rate limits + CHAOS.md)
+
+- **Per-tenant config:** `TENANT_LIMITS_PATH` env var points to a JSON file (`deploy/tenant-limits.example.json`). Each tenant can have its own `max_events_per_sec` and `burst_multiplier`; unknown tenants fall back to the file's `"default"` block (or env-level `RATE_LIMIT_DEFAULT_RPS` if no file is set).
+- **Lua script:** receives per-tenant `rps`/`burst` as ARGV — the script itself is unchanged; the Rust caller resolves limits before invocation.
+- **Fail-open metric:** `redis_rate_limit_degraded_total` — counts each rate-limit check that fell back to allow because Redis was unavailable.
+- **[CHAOS.md](CHAOS.md):** five failure scenarios mirroring §5 above, with local demo commands, expected behavior, recovery steps, and metric signals.
 
 ## Appendix — Open items
 
