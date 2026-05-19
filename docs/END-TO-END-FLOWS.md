@@ -31,8 +31,9 @@ Related: [OBSERVABILITY.md](../OBSERVABILITY.md) (metric catalog, SLO sketches),
 | **3** | Rust ingestion (part 2) | Runnable **Axum** binary: `POST /ingest`, WAL-before-channel, **rdkafka** producer, DLQ on produce failure, `GET /metrics` |
 | **4** | Deploy stack + consumer skeleton | [deploy/docker-compose.yml](../deploy/docker-compose.yml): Redis, Redpanda, ClickHouse, Prometheus, Grafana; topics via `redpanda-init`; DDL via `clickhouse-init`; Go **franz-go** reader (stdout / handoff wiring) |
 | **5** | ClickHouse writer (G-03) | **BatchWriter** (1000 events or 500ms), **circuit breaker**, **Redis LIST overflow**, **DLQ** after 3 insert retries, consumer Prometheus on `:9091`, Grafana dashboard **`ai-inference-e2e-local`**, [OBSERVABILITY.md](../OBSERVABILITY.md) |
+| **7** | Per-tenant rate limits + CHAOS.md (G-06) | **Per-tenant `max_events_per_sec` / `burst_multiplier`** via JSON config (`TENANT_LIMITS_PATH`), **`redis_rate_limit_degraded_total`** metric, **[CHAOS.md](../CHAOS.md)** failure runbook (5 scenarios with local repro) |
 
-Current feature branch reference: `feat/consumer-clickhouse-batch-writer` (Day 5 consumer path).
+Current feature branch reference: `feat/per-tenant-rate-limits-chaos` (Day 7 per-tenant limits + chaos).
 
 ---
 
@@ -244,6 +245,26 @@ DLQ message shape (`consumer/internal/kafka/dlq.go`): `{ "event", "error", "retr
 
 **Demo:** `./scripts/demo-flows.sh rate-limit` (optionally restart ingestion with `RATE_LIMIT_DEFAULT_RPS=10`).
 
+### Per-tenant rate limit (Day 7)
+
+When `TENANT_LIMITS_PATH` is set, each tenant resolves its own `max_events_per_sec` / `burst_multiplier` from the JSON file. Unknown tenants fall back to the `"default"` block.
+
+1. `tenant-demo` (5 rps) hits the wall after burst tokens exhausted → **429** + `Retry-After`.
+2. `tenant-b` (default 10k rps) is unbothered — noisy-neighbor containment.
+3. `rate_limited_requests_total{tenant_id="tenant-demo"}` spikes; `tenant-b` stays flat.
+
+**Demo:** `./scripts/demo-flows.sh per-tenant-limit`.
+
+### Redis lost → fail-open (Day 7)
+
+When Redis is unavailable, rate limiting fails open — all requests accepted.
+
+1. `redis_rate_limit_degraded_total` increments on each bypassed check.
+2. `rate_limited_requests_total` goes silent (no denials possible).
+3. On Redis recovery, limits resume immediately (no restart needed).
+
+**Demo:** `./scripts/demo-flows.sh fail-open`. Full scenario: [CHAOS.md](../CHAOS.md) §3.
+
 ### Backpressure (ingest)
 
 1. Bounded `mpsc` full after WAL append attempt path uses `try_send`.
@@ -403,6 +424,8 @@ Script: **`./scripts/demo-flows.sh <command>`** (chmod +x once).
 | `dlq-path` | Stop CH, few ingests | `increase(dlq_events_total[1h])` may tick (see script notes) |
 | `invalid-json` | `rpk topic produce` garbage | Handoff flat; consumer `record_failed` logs |
 | `rate-limit` | Many rapid POSTs | **Errors & rejections** → `rate_limited_requests_total` |
+| `per-tenant-limit` | tenant-demo (5rps) vs tenant-b (default) | `rate_limited_requests_total` by `tenant_id` |
+| `fail-open` | Stop Redis → fail-open → start Redis → limits resume | `redis_rate_limit_degraded_total` spikes during Redis outage |
 | `burst` | `BURST_N` parallel POSTs (default 50) | Handoff rate spike; flush p99 may move |
 | `validation-error` | POST `{"events":[]}` | HTTP 400; `ingestion_validation_errors_total` |
 | `timeout-event` | POST `status: timeout` | Product P99 / CH `status` column |
@@ -431,6 +454,8 @@ Added coverage: `writer_handoff_test.go` (ticket completion, overflow when break
 | Timeout status field | `timeout-event` | CH `status`, product P99 | Yes (normal path) |
 | WAL recovery | `recovery-hint` | `wal_replay_events_total` | N/A |
 | Rate limit | `rate-limit` | `rate_limited_requests_total` | N/A (never enqueued) |
+| Per-tenant limit | `per-tenant-limit` | `rate_limited_requests_total` by `tenant_id` | N/A |
+| Fail-open (Redis down) | `fail-open` | `redis_rate_limit_degraded_total` | N/A |
 | Backpressure | Manual / tiny channel | `backpressure_events_total` | N/A |
 
 ---

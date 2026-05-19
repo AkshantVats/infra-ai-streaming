@@ -102,7 +102,7 @@ mod tests {
     use crate::config::Config;
     use crate::handlers::AppState;
     use crate::kafka::ProduceMessage;
-    use crate::rate_limit::RateLimiter;
+    use crate::rate_limit::{RateLimiter, TenantLimitsConfig};
     use crate::wal::WalWriter;
 
     use super::build_router;
@@ -117,6 +117,7 @@ mod tests {
             wal_dir: "/tmp/wal-test-unused".into(),
             rate_limit_default_rps: 10_000,
             rate_limit_burst_multiplier: 2.0,
+            tenant_limits_path: None,
             batch_channel_capacity: 8,
             max_batch_size: 1000,
             max_event_age_ms: 3_600_000,
@@ -135,8 +136,11 @@ mod tests {
             kafka_tx: tx,
             wal_writer: Arc::new(tokio::sync::Mutex::new(wal)),
             rate_limiter: Arc::new(
-                RateLimiter::new(&config.redis_url, config.rate_limit_default_rps, 2.0)
-                    .expect("rate limiter"),
+                RateLimiter::new(
+                    &config.redis_url,
+                    TenantLimitsConfig::from_defaults(config.rate_limit_default_rps, 2.0),
+                )
+                .expect("rate limiter"),
             ),
         };
         let app = build_router(state);

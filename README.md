@@ -2,7 +2,7 @@
 
 **Sub-100ms AI inference observability at 1M events/min — Kafka-backed, ClickHouse-native, multi-tenant.**
 
-**Honest status:** the repo ships a tested **Rust ingestion library** and **runnable `ingestion` binary**, a **Go consumer** (Kafka → ClickHouse batch writer, circuit breaker, Redis overflow, DLQ), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). See [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md), **[docs/ARCHITECTURE-AND-FLOWS.md](docs/ARCHITECTURE-AND-FLOWS.md)** (architecture, lifecycles, observability matrix), and [OBSERVABILITY.md](OBSERVABILITY.md). Build plan: [docs/7-day-plan.md](docs/7-day-plan.md).
+**Honest status:** the repo ships a tested **Rust ingestion library** and **runnable `ingestion` binary**, a **Go consumer** (Kafka → ClickHouse batch writer, circuit breaker, Redis overflow, DLQ), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). See [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md), **[docs/ARCHITECTURE-AND-FLOWS.md](docs/ARCHITECTURE-AND-FLOWS.md)** (architecture, lifecycles, observability matrix), [OBSERVABILITY.md](OBSERVABILITY.md), and [CHAOS.md](CHAOS.md) (five failure scenarios with local repro). Build plan: [docs/7-day-plan.md](docs/7-day-plan.md).
 
 [![CI](https://github.com/AkshantVats/infra-ai-streaming/actions/workflows/ci.yml/badge.svg)](https://github.com/AkshantVats/infra-ai-streaming/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -91,7 +91,7 @@ Implemented vs planned (see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md)):
 - **WAL before Kafka produce** *(Day 3)*: segment WAL + fsync before accept; unacked replay on startup; `mark_acked` after broker delivery (at-least-once).
 - **Kafka / Redpanda**: `ai_inference_events` as primary stream; `ai_inference_dlq` for poison or persistently failing batches.
 - **Go stream consumer**: franz-go reader; **1000 events or 500ms** batch flush to ClickHouse; **circuit breaker** (5 failures → open, 30s half-open); **Redis LIST overflow**; **DLQ** after 3 insert retries; offsets commit after handoff.
-- **Redis**: distributed **token-bucket rate limit per `tenant_id`** on ingest; **overflow buffer** when ClickHouse is slow or unavailable.
+- **Redis**: distributed **token-bucket rate limit per `tenant_id`** on ingest (per-tenant config via `TENANT_LIMITS_PATH` JSON file — see `deploy/tenant-limits.example.json`); **overflow buffer** when ClickHouse is slow or unavailable. **Fail-open** when Redis is unavailable (documented in [CHAOS.md](CHAOS.md) §3).
 - **ClickHouse**: MergeTree-style storage, high-cardinality dimensions (`tenant_id`, `model_id`), time-range scans optimized for rollups and dashboards.
 - **Self-observability**: Prometheus scrapes Rust and Go (`/metrics`) — ingestion latency histograms, Kafka consumer lag, DLQ depth, circuit-breaker state.
 - **Grafana**: **Product SLOs** dashboard (tenant throughput, P99 by model, cost/hour, consumer lag) plus **Local E2E** ops board — provisioned from `dashboards/`.
@@ -180,6 +180,17 @@ cd infra-ai-streaming
 1. `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
 2. Run **consumer** (`cd consumer && go run ./cmd/consumer`) and **ingestion** (`cargo run -p ingestion`) with `deploy/.env` sourced; `KAFKA_BROKERS=127.0.0.1:9092` for the consumer.
 3. `curl` `/ingest` (example below) → verify Kafka (`rpk topic consume`) and consumer stdout (`cost_usd=0.00423`). Grafana: http://localhost:3000.
+
+### Per-tenant rate limit demo
+
+Set `TENANT_LIMITS_PATH=deploy/tenant-limits.example.json` when starting ingestion to enable per-tenant limits (`tenant-demo` = 5 rps, `tenant-premium` = 50k rps, `tenant-free` = 100 rps). Then:
+
+```bash
+./scripts/demo-flows.sh per-tenant-limit   # tenant-demo gets 429, tenant-b is fine
+./scripts/demo-flows.sh fail-open          # stop Redis → fail-open → start Redis → limits resume
+```
+
+See [CHAOS.md](CHAOS.md) for the full four-scene demo story and five failure scenarios.
 
 ### Grafana
 

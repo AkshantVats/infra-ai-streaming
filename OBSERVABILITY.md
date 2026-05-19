@@ -22,6 +22,7 @@ Prometheus runs in Docker and scrapes the host via `host.docker.internal` (see `
 | `rate_limited_requests_total{tenant_id}` | Counter | HTTP 429 rate-limit denials |
 | `backpressure_events_total` | Counter | HTTP 503 when internal channel full |
 | `ingestion_validation_errors_total{error}` | Counter | HTTP 400 validation (`empty_batch`, `invalid_cost`, …) |
+| `redis_rate_limit_degraded_total` | Counter | Rate limit checks that fell back to fail-open (Redis unavailable) |
 | `kafka_produce_errors_total{tenant_id,error_type}` | Counter | Produce exhausted retries (DLQ attempted) |
 | `wal_segments_pending` | Gauge | WAL segments with unacked entries |
 | `wal_replay_events_total` | Counter | Events replayed from WAL on startup |
@@ -75,6 +76,18 @@ Credentials: `admin` / `admin` (from `deploy/.env`).
 | Kafka consumer lag | Prometheus | `sum(kafka_consumer_lag_events) by (topic)` |
 
 **Note:** Panel 1 tracks **ingest accept**; panels 2–3 read **ClickHouse** after the consumer has written. Temporary skew is normal when lag is high.
+
+## Rate limiting (per-tenant)
+
+When `TENANT_LIMITS_PATH` is set, each tenant resolves its own `max_events_per_sec` / `burst_multiplier` from the JSON file. Unknown tenants fall back to the `default` entry (or env-level `RATE_LIMIT_DEFAULT_RPS`).
+
+| What to check | How |
+|---------------|-----|
+| Denied requests by tenant | `rate(rate_limited_requests_total[5m])` grouped by `tenant_id` |
+| Fail-open events (Redis down) | `rate(redis_rate_limit_degraded_total[5m])` — should be 0 normally |
+| Per-tenant config in use | Check `TENANT_LIMITS_PATH` env var; file schema in `deploy/tenant-limits.example.json` |
+
+Failure behavior and local reproduction: [CHAOS.md](CHAOS.md) (scenario 3 — Redis lost).
 
 ## Useful queries
 

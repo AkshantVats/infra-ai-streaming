@@ -32,6 +32,8 @@ Commands:
   dlq-path          Stop CH; burst ingest; expect dlq_events_total increase
   invalid-json      Produce garbage to ai_inference_events (offset stuck)
   rate-limit        Hammer /ingest to trigger 429 (lower RATE_LIMIT_DEFAULT_RPS first)
+  per-tenant-limit  Demo per-tenant limits (tenant-demo=5rps vs tenant-b=1000rps)
+  fail-open         Stop Redis; show fail-open; restart Redis; limits resume
   burst             Send N parallel ingest requests (default N=50)
   validation-error  POST invalid batch (empty events) → 400 + validation metric
   timeout-event     POST event with status=timeout (still 202; CH stores status)
@@ -234,6 +236,64 @@ cmd_metrics_snapshot() {
   curl -sf "$METRICS_CONSUMER" 2>/dev/null | grep -E 'kafka_records|kafka_deserialization|kafka_record_handoff|clickhouse_|circuit_breaker|redis_overflow|dlq_|kafka_consumer_lag' || echo "(consumer not up)"
 }
 
+cmd_per_tenant_limit() {
+  require_ingest
+  echo "Per-tenant rate limit demo (requires TENANT_LIMITS_PATH=deploy/tenant-limits.example.json)"
+  echo "tenant-demo is capped at 5 rps (burst=10 tokens). Sending 20 rapid POSTs..."
+  local ok=0 denied=0
+  for _ in $(seq 1 20); do
+    code="$(post_ingest "tenant-demo")"
+    if [[ "$code" == "202" ]]; then ok=$((ok + 1)); elif [[ "$code" == "429" ]]; then denied=$((denied + 1)); fi
+  done
+  echo "tenant-demo: 202=${ok} 429=${denied}"
+  echo ""
+  echo "Now sending 20 as tenant-b (default or high limit)..."
+  ok=0; denied=0
+  for _ in $(seq 1 20); do
+    code="$(post_ingest "tenant-b")"
+    if [[ "$code" == "202" ]]; then ok=$((ok + 1)); elif [[ "$code" == "429" ]]; then denied=$((denied + 1)); fi
+  done
+  echo "tenant-b:    202=${ok} 429=${denied}"
+  echo ""
+  echo "Grafana: Errors & rejections → rate_limited_requests_total by tenant_id"
+  echo "Punch line: tenant-demo is rate-limited while tenant-b is unbothered."
+}
+
+cmd_fail_open() {
+  require_ingest
+  echo "=== Scene 1: Rate limits enforced (Redis up) ==="
+  local ok=0 denied=0
+  for _ in $(seq 1 15); do
+    code="$(post_ingest "tenant-demo")"
+    if [[ "$code" == "202" ]]; then ok=$((ok + 1)); elif [[ "$code" == "429" ]]; then denied=$((denied + 1)); fi
+  done
+  echo "tenant-demo: 202=${ok} 429=${denied} (expect some 429s)"
+  echo ""
+  echo "=== Scene 2: Stopping Redis — fail-open ==="
+  "${COMPOSE[@]}" stop redis
+  sleep 1
+  ok=0; denied=0
+  for _ in $(seq 1 15); do
+    code="$(post_ingest "tenant-demo")"
+    if [[ "$code" == "202" ]]; then ok=$((ok + 1)); elif [[ "$code" == "429" ]]; then denied=$((denied + 1)); fi
+  done
+  echo "tenant-demo: 202=${ok} 429=${denied} (expect all 202 — fail-open)"
+  echo "Check ingestion logs: 'redis unavailable; rate limit fail-open'"
+  echo ""
+  echo "=== Scene 3: Starting Redis — limits resume ==="
+  "${COMPOSE[@]}" start redis
+  sleep 2
+  ok=0; denied=0
+  for _ in $(seq 1 15); do
+    code="$(post_ingest "tenant-demo")"
+    if [[ "$code" == "202" ]]; then ok=$((ok + 1)); elif [[ "$code" == "429" ]]; then denied=$((denied + 1)); fi
+  done
+  echo "tenant-demo: 202=${ok} 429=${denied} (expect 429s again)"
+  echo ""
+  echo "Grafana: redis_rate_limit_degraded_total spiked during Scene 2"
+  echo "Punch line: Redis up → limits enforced. Redis down → fail-open. Redis back → limits resume."
+}
+
 case "${1:-help}" in
   stack-up) cmd_stack_up ;;
   stack-down) cmd_stack_down ;;
@@ -243,6 +303,8 @@ case "${1:-help}" in
   dlq-path) cmd_dlq_path ;;
   invalid-json) cmd_invalid_json ;;
   rate-limit) cmd_rate_limit ;;
+  per-tenant-limit) cmd_per_tenant_limit ;;
+  fail-open) cmd_fail_open ;;
   burst) cmd_burst ;;
   validation-error) cmd_validation_error ;;
   timeout-event) cmd_timeout_event ;;
