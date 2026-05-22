@@ -1,0 +1,79 @@
+{{- if .Values.clickhouse.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "lensai.fullname" . }}-clickhouse
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+spec:
+  serviceName: clickhouse
+  replicas: {{ .Values.clickhouse.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lensai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: clickhouse
+  template:
+    metadata:
+      labels:
+        {{- include "lensai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: clickhouse
+    spec:
+      containers:
+        - name: clickhouse
+          image: {{ .Values.clickhouse.image }}
+          ports:
+            - containerPort: 8123
+              name: http
+            - containerPort: 9000
+              name: native
+          livenessProbe:
+            exec:
+              command: ["clickhouse-client", "--query", "SELECT 1"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["clickhouse-client", "--query", "SELECT 1"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+            - name: users-d
+              mountPath: /etc/clickhouse-server/users.d
+              readOnly: true
+          resources:
+            {{- toYaml .Values.clickhouse.resources | nindent 12 }}
+      volumes:
+        - name: users-d
+          configMap:
+            name: {{ include "lensai.fullname" . }}-clickhouse-users
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.clickhouse.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+spec:
+  selector:
+    {{- include "lensai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+  ports:
+    - port: 8123
+      targetPort: http
+      name: http
+    - port: 9000
+      targetPort: native
+      name: native
+{{- end }}

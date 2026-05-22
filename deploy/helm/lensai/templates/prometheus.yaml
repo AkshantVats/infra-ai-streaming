@@ -1,0 +1,92 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "lensai.fullname" . }}-prometheus
+  labels:
+    app.kubernetes.io/component: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: {{ .Values.prometheus.scrapeInterval }}
+      evaluation_interval: {{ .Values.prometheus.scrapeInterval }}
+    scrape_configs:
+      - job_name: ingestion
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["ingestion:{{ .Values.ingestion.httpPort }}"]
+      - job_name: consumer
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["consumer:{{ .Values.consumer.metricsPort }}"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lensai.fullname" . }}-prometheus
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "lensai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: prometheus
+  template:
+    metadata:
+      labels:
+        {{- include "lensai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: {{ .Values.prometheus.image }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --web.enable-lifecycle
+          ports:
+            - containerPort: 9090
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          resources:
+            {{- toYaml .Values.prometheus.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "lensai.fullname" . }}-prometheus
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/component: prometheus
+spec:
+  selector:
+    {{- include "lensai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+  ports:
+    - port: 9090
+      targetPort: http
+      name: http
+{{- end }}

@@ -1,0 +1,12 @@
+{{- if .Values.ingestion.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "lensai.fullname" . }}-tenant-limits
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion
+data:
+  tenant-limits.json: |
+{{ .Files.Get "files/tenant-limits.json" | indent 4 }}
+{{- end }}

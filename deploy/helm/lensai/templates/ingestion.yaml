@@ -1,0 +1,99 @@
+{{- if .Values.ingestion.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lensai.fullname" . }}-ingestion
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion
+spec:
+  replicas: {{ .Values.ingestion.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lensai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ingestion
+  template:
+    metadata:
+      labels:
+        {{- include "lensai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ingestion
+    spec:
+      containers:
+        - name: ingestion
+          image: "{{ .Values.ingestion.image.repository }}:{{ .Values.ingestion.image.tag }}"
+          imagePullPolicy: {{ .Values.ingestion.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.ingestion.httpPort }}
+              name: http
+          env:
+            - name: KAFKA_BROKERS
+              value: {{ .Values.kafka.brokers | quote }}
+            - name: KAFKA_TOPIC
+              value: {{ .Values.kafka.topic | quote }}
+            - name: KAFKA_DLQ_TOPIC
+              value: {{ .Values.kafka.dlqTopic | quote }}
+            - name: REDIS_URL
+              value: {{ .Values.redisUrl | quote }}
+            - name: HTTP_PORT
+              value: {{ .Values.ingestion.httpPort | quote }}
+            - name: WAL_DIR
+              value: {{ .Values.ingestion.walDir | quote }}
+            - name: TENANT_LIMITS_PATH
+              value: {{ .Values.ingestion.tenantLimitsPath | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.ingestion.resources | nindent 12 }}
+          volumeMounts:
+            - name: wal
+              mountPath: {{ .Values.ingestion.walDir }}
+            - name: tenant-limits
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: wal
+          emptyDir: {}
+        - name: tenant-limits
+          configMap:
+            name: {{ include "lensai.fullname" . }}-tenant-limits
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestion
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "lensai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion
+  ports:
+    - port: {{ .Values.ingestion.httpPort }}
+      targetPort: http
+      name: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "lensai.fullname" . }}-ingestion
+  labels:
+    app.kubernetes.io/component: ingestion
+spec:
+  maxUnavailable: {{ .Values.ingestion.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "lensai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ingestion
+{{- end }}

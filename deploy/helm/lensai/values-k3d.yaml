@@ -1,0 +1,38 @@
+# k3d / laptop overrides — use with:
+#   helm upgrade --install lensai deploy/helm/lensai -n lensai --create-namespace -f deploy/helm/lensai/values-k3d.yaml
+
+ingestion:
+  image:
+    pullPolicy: Never
+  replicas: 2
+
+consumer:
+  image:
+    pullPolicy: Never
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+    targetAverageValue: "500"
+
+clickhouse:
+  storage: 10Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+redpanda:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+prometheusAdapter:
+  enabled: true

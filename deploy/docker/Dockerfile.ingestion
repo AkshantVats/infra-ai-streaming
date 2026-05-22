@@ -1,0 +1,32 @@
+# Multi-stage build for ingestion (rdkafka uses cmake).
+# Build from repo root:
+#   docker build -f deploy/docker/Dockerfile.ingestion -t lensai/ingestion:local .
+
+FROM rust:1.86-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    libssl-dev \
+    libsasl2-dev \
+    libzstd-dev \
+    libcurl4-openssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY ingestion ./ingestion
+RUN cargo build --release -p ingestion --bin ingestion
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    libsasl2-2 \
+    libzstd1 \
+    libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=builder /build/target/release/ingestion /app/ingestion
+RUN mkdir -p /data/wal
+ENV WAL_DIR=/data/wal
+EXPOSE 8080
+ENTRYPOINT ["/app/ingestion"]

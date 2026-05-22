@@ -104,7 +104,7 @@
 - **Go consumer:** add instances in the **same consumer group** for a partition set; Kafka **rebalances** partitions; scale on **consumer lag**, not CPU alone.
 - **ClickHouse:** **distributed** tables across shards; **shard key = `tenant_id`** for **data locality** on tenant-heavy dashboards (implementation detail: distributed DDL in `deploy/clickhouse/` when checked in).
 - **Redis:** a **single primary** (with replica for read scaling if needed) is acceptable for **token buckets and short TTL keys** at the target rates; if limits become Redis-bound, **Redis Cluster** is the migration path without changing the API contract.
-- **Kubernetes HPA:** scale **ingestion** on **CPU** plus a **custom metric** (e.g. Kafka **producer queue depth** or channel saturation proxy); scale **consumers** primarily on **Kafka consumer lag**.
+- **Kubernetes HPA:** scale **consumers** on **Kafka consumer lag** (`kafka_consumer_lag_events` → `kafka_consumer_lag_sum` via prometheus-adapter); **ingestion** HA via fixed replicas + PDB (see `deploy/helm/lensai/`).
 
 ---
 
@@ -129,7 +129,7 @@ The `ingestion` binary implements §2–§4 at a first milestone:
 - **Kafka:** **rdkafka** producer to `KAFKA_TOPIC`; failed batches after retries go to `KAFKA_DLQ_TOPIC`. Local dev uses **Redpanda** in Docker Compose (`127.0.0.1:9092`)—Kafka-compatible API, not a host-native Kafka install.
 - **Rate limit:** Redis token bucket per `tenant_id` (and `X-Tenant-ID` header); fail-open on Redis errors per §5.
 
-**Still out of scope in-tree:** Helm charts, anomaly detector, OTLP wiring.
+**Still out of scope in-tree:** EKS Terraform, Grafana in k8s, anomaly detector, OTLP wiring. **In tree:** local Helm chart + k3d (`deploy/README.md`).
 
 ## Appendix — Day 4 milestone (Go consumer skeleton)
 

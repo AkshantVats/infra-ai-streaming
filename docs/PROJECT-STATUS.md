@@ -14,13 +14,13 @@ This document states what exists in the repository today versus what is still de
 - **Redis rate limiting**: Per-tenant token bucket on ingest (fail-open when Redis is unavailable, per design).
 - **Go consumer** (`consumer/`): franz-go reader → ClickHouse **BatchWriter** (1000 events / 500ms), **circuit breaker**, **Redis overflow**, **DLQ** (`ai_inference_dlq`), Prometheus on **`:9091`**. Unit tests for JSON, breaker, row mapping.
 - **OBSERVABILITY.md**: Metrics catalog, SLO sketches, ClickHouse verification queries.
-- **docs/ARCHITECTURE-AND-FLOWS.md**: Architecture, G-01..G-05 status, code walkthrough, lifecycle paths, dual-dashboard observability matrix, troubleshooting.
+- **docs/ARCHITECTURE-AND-FLOWS.md**: Architecture, G-01..G-07 status, code walkthrough, lifecycle paths, dual-dashboard observability matrix, troubleshooting.
 - **Local dependency stack**: Docker Compose runs **Redis**, **Redpanda**, **ClickHouse**, **Prometheus**, **Grafana**, plus one-shot **redpanda-init** (topics) and **clickhouse-init** (DDL). See [deploy/README.md](../deploy/README.md) for ports.
+- **Helm / k3d (G-07):** Umbrella chart `deploy/helm/lensai/`, Dockerfiles, k3d config, consumer HPA on `kafka_consumer_lag_sum` via prometheus-adapter. Three-command path in [deploy/README.md](../deploy/README.md).
 
 ## Not production-complete yet (gaps)
 
 - **Anomaly detection** and `ai_anomalies` topic publishing — backlog.
-- **No Helm / Kubernetes charts** checked in; deployment artifacts here are local-dev oriented.
 - **Integration / load tests in CI**: CI runs **Rust unit tests** only; compose E2E and `go test ./consumer/...` are local (`scripts/smoke-e2e.sh`).
 - **Partition key:** producer keys by `tenant_id` only; DESIGN target `hash(tenant_id:model_id)` not implemented.
 
@@ -36,6 +36,7 @@ This document states what exists in the repository today versus what is still de
 | Grafana **Local E2E** ops dashboard | Provisioned (`ai-inference-e2e-local`) |
 | Grafana **Product SLOs** dashboard (G-05) | Provisioned (`ai-inference-product`) — 4 panels: ingest eps, CH P99 by model, cost/hour, `kafka_consumer_lag_events` |
 | `kafka_consumer_lag_events` on consumer `:9091` | Implemented in Go reader |
+| k3d + Helm full stack + lag HPA (G-07) | `deploy/helm/lensai/`, `scripts/smoke-k8s-e2e.sh` (local verify) |
 
 ## 3-step local demo (HTTP → Kafka → ClickHouse)
 
