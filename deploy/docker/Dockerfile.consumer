@@ -2,7 +2,7 @@
 # Build from repo root:
 #   docker build -f deploy/docker/Dockerfile.consumer -t lensai/consumer:local .
 
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.25-bookworm AS builder
 WORKDIR /build/consumer
 COPY consumer/go.mod consumer/go.sum ./
 RUN go mod download
