@@ -28,17 +28,6 @@ cargo run -p ingestion
 
 Grafana: http://localhost:3000/d/ai-inference-e2e-local (admin / admin).
 
-### Kubernetes (k3d / G-07)
-
-```bash
-./deploy/k3d/up.sh
-helm dependency update deploy/helm/lensai
-helm upgrade --install lensai deploy/helm/lensai -n lensai --create-namespace -f deploy/helm/lensai/values-k3d.yaml --wait --timeout 10m
-./scripts/smoke-k8s-e2e.sh
-```
-
-Ingestion WAL uses `emptyDir` in k3d — pod OOM/delete loses un-replayed segments until PVC is enabled. Reproduce ingestion OOM: `kubectl delete pod -n lensai -l app.kubernetes.io/component=ingestion` during ingest flood.
-
 ---
 
 ## Scenario 1 — Kafka broker dies mid-ingest
