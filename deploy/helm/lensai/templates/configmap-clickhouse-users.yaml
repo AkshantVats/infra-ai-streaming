@@ -1,0 +1,20 @@
+{{- if .Values.clickhouse.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "lensai.fullname" . }}-clickhouse-users
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+data:
+  zz-allow-host.xml: |
+    <clickhouse>
+      <users>
+        <default>
+          <networks>
+            <ip>::/0</ip>
+          </networks>
+        </default>
+      </users>
+    </clickhouse>
+{{- end }}

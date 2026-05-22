@@ -1,0 +1,132 @@
+# Default values (prod-shaped names; use values-k3d.yaml for local k3d).
+global:
+  namespace: lensai
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+redpanda:
+  enabled: true
+  image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+  replicas: 1
+  memory: 1G
+  topicPartitions: 8
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+clickhouse:
+  enabled: true
+  image: clickhouse/clickhouse-server:24.12-alpine
+  replicas: 1
+  storage: 50Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+ingestion:
+  enabled: true
+  image:
+    repository: lensai/ingestion
+    tag: local
+    pullPolicy: IfNotPresent
+  replicas: 2
+  httpPort: 8080
+  walDir: /data/wal
+  tenantLimitsPath: /config/tenant-limits.json
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  pdb:
+    maxUnavailable: 1
+
+consumer:
+  enabled: true
+  image:
+    repository: lensai/consumer
+    tag: local
+    pullPolicy: IfNotPresent
+  replicas: 1
+  metricsPort: 9091
+  kafkaGroupId: ai-inference-consumer-k8s
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  pdb:
+    maxUnavailable: 1
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 12
+    lagMetricName: kafka_consumer_lag_sum
+    targetAverageValue: "500"
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+      scaleDown:
+        stabilizationWindowSeconds: 120
+
+prometheus:
+  enabled: true
+  image: prom/prometheus:v2.54.1
+  scrapeInterval: 15s
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+prometheusAdapter:
+  enabled: true
+
+# Subchart: prometheus-community/prometheus-adapter
+prometheus-adapter:
+  prometheus:
+    url: http://prometheus:9090
+  rules:
+    default: false
+    external:
+      - seriesQuery: 'kafka_consumer_lag_events{topic="ai_inference_events",namespace!="",pod!=""}'
+        resources:
+          overrides:
+            namespace:
+              resource: namespace
+        name:
+          matches: kafka_consumer_lag_events
+          as: kafka_consumer_lag_sum
+        metricsQuery: sum(<<.Series>>{<<.LabelMatchers>>})
+
+kafka:
+  topic: ai_inference_events
+  dlqTopic: ai_inference_dlq
+  brokers: redpanda:9092
+
+redisUrl: redis://redis:6379
+clickhouseDsn: clickhouse://clickhouse:9000/infra_ai

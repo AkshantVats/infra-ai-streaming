@@ -1,0 +1,25 @@
+# k3d cluster for LensAI local Kubernetes (Day 8 / G-07).
+# Create: k3d cluster create lensai --config deploy/k3d/cluster.yaml
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: lensai
+servers: 1
+agents: 0
+image: rancher/k3s:v1.31.5-k3s1
+ports:
+  - port: 8080:80
+    nodeFilters:
+      - loadbalancer
+  - port: 9091:9091
+    nodeFilters:
+      - loadbalancer
+options:
+  k3s:
+    extraArgs:
+      - arg: --kubelet-arg=eviction-hard=imagefs.available<5%,nodefs.available<5%
+        nodeFilters:
+          - server:*
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

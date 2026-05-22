@@ -1,0 +1,30 @@
+{{- if and .Values.consumer.enabled .Values.consumer.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "lensai.fullname" . }}-consumer
+  labels:
+    app.kubernetes.io/component: consumer
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "lensai.fullname" . }}-consumer
+  minReplicas: {{ .Values.consumer.hpa.minReplicas }}
+  maxReplicas: {{ .Values.consumer.hpa.maxReplicas }}
+  metrics:
+    - type: External
+      external:
+        metric:
+          name: {{ .Values.consumer.hpa.lagMetricName }}
+          selector:
+            matchLabels:
+              namespace: {{ .Release.Namespace }}
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.consumer.hpa.targetAverageValue | quote }}
+  {{- with .Values.consumer.hpa.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

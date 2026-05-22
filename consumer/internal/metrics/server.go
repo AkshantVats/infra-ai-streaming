@@ -8,9 +8,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// StartServer exposes /metrics on port.
+// StartServer exposes /health and /metrics on port.
 func StartServer(port int) {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	mux.Handle("/metrics", promhttp.Handler())
 	addr := fmt.Sprintf(":%d", port)
 	go func() {

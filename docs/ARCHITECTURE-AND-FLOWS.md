@@ -116,6 +116,7 @@ Milestones **G-01..G-05** map to the 7-day plan goals. **Days 0–6** are delive
 | **G-03** | Go consumer → ClickHouse (batch, breaker, overflow, DLQ) | 5 | **Completed** | **Completed** | `consumer/internal/clickhouse/writer.go`, `kafka/reader.go` |
 | **G-04** | Local E2E Grafana dashboard | 5 | **Completed** | **Completed** | `deploy/grafana/.../ai-inference-e2e.json` (UID `ai-inference-e2e-local`) |
 | **G-05** | Product SLO dashboard + consumer lag metric | 6 | **Completed** | **Partial** (no product dashboard / lag on `main`) | `dashboards/ai-inference-product.json`, `consumer/internal/kafka/reader.go` |
+| **G-07** | Helm + k3d + consumer HPA on Kafka lag | 8 | **Completed** (feature branch) | Pending merge | `deploy/helm/lensai/`, `deploy/k3d/cluster.yaml` |
 
 ### Day-by-day snapshot
 
@@ -128,6 +129,8 @@ Milestones **G-01..G-05** map to the 7-day plan goals. **Days 0–6** are delive
 | 4 | Compose + consumer skeleton | Done | franz-go reader wired |
 | 5 | BatchWriter, breaker, overflow, DLQ, E2E dashboard | Done | `:9091` metrics |
 | 6 | Product SLO dashboard, lag gauge, docs polish | Done on `feat/grafana-inference-slo-dashboard` | CI still Rust-only in workflow |
+| 7 | Per-tenant rate limits, CHAOS.md | Done on `feat/per-tenant-rate-limits-chaos` | ConfigMap → `TENANT_LIMITS_PATH` |
+| 8 | Helm umbrella chart, k3d, consumer lag HPA | Done on `feat/helm-k3d-hpa` | Compose path unchanged |
 
 ### Pending / backlog
 
@@ -136,7 +139,7 @@ Milestones **G-01..G-05** map to the 7-day plan goals. **Days 0–6** are delive
 | `hash(tenant_id:model_id)` partition key | Pending |
 | Anomaly detection + `ai_anomalies` topic | Pending |
 | k6 load test in CI, BENCHMARKS.md numbers | Pending |
-| Helm / Kubernetes charts | Pending |
+| Helm / Kubernetes charts | **Done** (`deploy/helm/lensai/`, k3d in `deploy/README.md`) |
 | OTLP export wired in compose | Partial (env stub only) |
 | `go test` in GitHub Actions | Pending (runs locally) |
 

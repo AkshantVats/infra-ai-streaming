@@ -1,0 +1,11 @@
+apiVersion: v2
+name: lensai
+description: LensAI full stack — Redis, Redpanda, ClickHouse, ingestion, consumer (k3d/local)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: prometheus-adapter
+    version: 4.11.0
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: prometheusAdapter.enabled

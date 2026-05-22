@@ -1,0 +1,12 @@
+{{- if .Values.clickhouse.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "lensai.fullname" . }}-clickhouse-init
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+data:
+  init.sql: |
+{{ .Files.Get "files/clickhouse-init.sql" | indent 4 }}
+{{- end }}

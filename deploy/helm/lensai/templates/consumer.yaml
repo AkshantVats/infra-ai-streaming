@@ -1,0 +1,90 @@
+{{- if .Values.consumer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lensai.fullname" . }}-consumer
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: consumer
+spec:
+  replicas: {{ .Values.consumer.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lensai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: consumer
+  template:
+    metadata:
+      labels:
+        {{- include "lensai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: consumer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.consumer.metricsPort | quote }}
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: consumer
+          image: "{{ .Values.consumer.image.repository }}:{{ .Values.consumer.image.tag }}"
+          imagePullPolicy: {{ .Values.consumer.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.consumer.metricsPort }}
+              name: metrics
+          env:
+            - name: KAFKA_BROKERS
+              value: {{ .Values.kafka.brokers | quote }}
+            - name: KAFKA_TOPIC
+              value: {{ .Values.kafka.topic | quote }}
+            - name: KAFKA_DLQ_TOPIC
+              value: {{ .Values.kafka.dlqTopic | quote }}
+            - name: KAFKA_GROUP_ID
+              value: {{ .Values.consumer.kafkaGroupId | quote }}
+            - name: REDIS_URL
+              value: {{ .Values.redisUrl | quote }}
+            - name: CLICKHOUSE_DSN
+              value: {{ .Values.clickhouseDsn | quote }}
+            - name: METRICS_PORT
+              value: {{ .Values.consumer.metricsPort | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.consumer.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consumer
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: consumer
+spec:
+  selector:
+    {{- include "lensai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: consumer
+  ports:
+    - port: {{ .Values.consumer.metricsPort }}
+      targetPort: metrics
+      name: metrics
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "lensai.fullname" . }}-consumer
+  labels:
+    app.kubernetes.io/component: consumer
+spec:
+  maxUnavailable: {{ .Values.consumer.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "lensai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: consumer
+{{- end }}
