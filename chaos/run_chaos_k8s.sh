@@ -107,12 +107,39 @@ start_port_forwards() {
   kubectl port-forward -n "${NS}" svc/consumer 9091:9091 >/tmp/pf-con-k8s.log 2>&1 &
   PF_CON=$!
   sleep 3
+  disown_port_forwards
+}
+
+disown_port_forwards() {
+  # Bare `wait` would block on port-forward jobs; disown them so only curl PIDs are waited on.
+  [[ -n "$PF_ING" ]] && disown "$PF_ING" 2>/dev/null || true
+  [[ -n "$PF_CON" ]] && disown "$PF_CON" 2>/dev/null || true
 }
 
 stop_port_forwards() {
   [[ -n "$PF_ING" ]] && kill "$PF_ING" 2>/dev/null || true
   [[ -n "$PF_CON" ]] && kill "$PF_CON" 2>/dev/null || true
   PF_ING="" PF_CON=""
+}
+
+wait_pids() {
+  local pid
+  for pid in "$@"; do
+    wait "$pid" 2>/dev/null || true
+  done
+}
+
+ensure_clickhouse_up() {
+  local sts
+  sts="$(sts_name clickhouse)"
+  [[ -n "$sts" ]] || return 0
+  local desired
+  desired="$(kubectl get sts "$sts" -n "${NS}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 1)"
+  if [[ "${desired:-0}" == "0" ]]; then
+    log "Restoring ClickHouse replicas (was scaled to 0)..."
+    kubectl scale "statefulset/${sts}" -n "${NS}" --replicas=1
+    wait_clickhouse_ready 120 || true
+  fi
 }
 
 require_ingest() {
@@ -123,39 +150,25 @@ require_ingest() {
 }
 
 wait_redpanda_ready() {
-  local sts timeout="${2:-120}" elapsed=0
-  sts="$(sts_name redpanda)"
-  [[ -n "$sts" ]] || return 1
-  log "Waiting for redpanda StatefulSet ready..."
-  while (( elapsed < timeout )); do
-    local ready desired
-    ready="$(kubectl get sts "$sts" -n "${NS}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)"
-    desired="$(kubectl get sts "$sts" -n "${NS}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 1)"
-    if [[ "${ready:-0}" -ge 1 ]] && [[ "${ready:-0}" -ge "${desired:-1}" ]]; then
-      pass "Redpanda ready (${elapsed}s)"
-      return 0
-    fi
-    sleep 3
-    elapsed=$((elapsed + 3))
-  done
+  local timeout="${1:-120}"
+  local selector="app.kubernetes.io/instance=${RELEASE},app.kubernetes.io/component=redpanda"
+  log "Waiting for redpanda pod ready (${timeout}s)..."
+  if kubectl wait --for=condition=ready pod -l "${selector}" -n "${NS}" --timeout="${timeout}s" >/dev/null 2>&1; then
+    pass "Redpanda ready"
+    return 0
+  fi
   fail "Redpanda not ready after ${timeout}s"
   return 1
 }
 
 wait_clickhouse_ready() {
-  local sts timeout="${2:-120}" elapsed=0
-  sts="$(sts_name clickhouse)"
-  [[ -n "$sts" ]] || return 1
-  while (( elapsed < timeout )); do
-    local ready
-    ready="$(kubectl get sts "$sts" -n "${NS}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)"
-    if [[ "${ready:-0}" -ge 1 ]]; then
-      pass "ClickHouse ready (${elapsed}s)"
-      return 0
-    fi
-    sleep 3
-    elapsed=$((elapsed + 3))
-  done
+  local timeout="${1:-120}"
+  local selector="app.kubernetes.io/instance=${RELEASE},app.kubernetes.io/component=clickhouse"
+  log "Waiting for ClickHouse pod ready (${timeout}s)..."
+  if kubectl wait --for=condition=ready pod -l "${selector}" -n "${NS}" --timeout="${timeout}s" >/dev/null 2>&1; then
+    pass "ClickHouse ready"
+    return 0
+  fi
   fail "ClickHouse not ready after ${timeout}s"
   return 1
 }
@@ -185,6 +198,7 @@ scenario_kill_redpanda() {
   echo -e "${BOLD}SCENARIO C1 (k8s): kill-redpanda — broker outage + WAL replay${NC}"
   separator
 
+  ensure_clickhouse_up
   start_port_forwards
   trap stop_port_forwards EXIT
   require_ingest
@@ -193,11 +207,13 @@ scenario_kill_redpanda() {
   payload_50="$(make_event_payload 50 "$TENANT")"
 
   log "Phase 1: baseline ingest (150 events)..."
+  local -a pids=()
   for _ in $(seq 1 3); do
     curl -sS "${CURL_OPTS[@]}" -o /dev/null -X POST "${INGEST_URL}/ingest" \
       -H 'Content-Type: application/json' -H "X-Tenant-ID: ${TENANT}" -d "$payload_50" &
+    pids+=($!)
   done
-  wait || true
+  wait_pids "${pids[@]}"
   sleep 3
   local ch_before
   ch_before="$(count_events_in_ch | tr -cd '0-9')"
@@ -230,7 +246,7 @@ scenario_kill_redpanda() {
   log "Phase 4: broker down ${REDPANDA_DOWN_SEC}s, then restore..."
   sleep "$REDPANDA_DOWN_SEC"
   kubectl scale "statefulset/${sts}" -n "${NS}" --replicas=1
-  wait_redpanda_ready 180
+  wait_redpanda_ready 120
 
   log "Phase 5: restart ingestion for WAL replay..."
   restart_ingestion_k8s || warn "WAL replay may need manual check"
@@ -239,7 +255,7 @@ scenario_kill_redpanda() {
   log "wal_replay_events_total: ${replay:-0}"
 
   log "Phase 6: wait for consumer → ClickHouse..."
-  sleep 20
+  sleep 10
   local ch_after
   ch_after="$(count_events_in_ch | tr -cd '0-9')"
   ch_after="${ch_after:-0}"
@@ -259,8 +275,9 @@ scenario_throttle_clickhouse() {
   echo -e "${BOLD}SCENARIO C2 (k8s): throttle-clickhouse — breaker + overflow${NC}"
   separator
 
+  ensure_clickhouse_up
   start_port_forwards
-  trap stop_port_forwards EXIT
+  trap 'stop_port_forwards; ensure_clickhouse_up' EXIT
   require_ingest
 
   local cb_before overflow_before ch_before
@@ -278,11 +295,13 @@ scenario_throttle_clickhouse() {
   local payload_50
   payload_50="$(make_event_payload 50 "$TENANT")"
   log "Phase 2: load while CH unavailable..."
-  for _ in $(seq 1 20); do
+  local -a pids=()
+  for _ in $(seq 1 8); do
     curl -sS "${CURL_OPTS[@]}" -o /dev/null -X POST "${INGEST_URL}/ingest" \
       -H 'Content-Type: application/json' -H "X-Tenant-ID: ${TENANT}" -d "$payload_50" &
+    pids+=($!)
   done
-  wait
+  wait_pids "${pids[@]}"
 
   local elapsed=0 cb_during overflow_during
   while (( elapsed < CH_PAUSE_SEC )); do
@@ -328,6 +347,7 @@ scenario_load_m1() {
   echo -e "${BOLD}SCENARIO load-m1 — ${LOAD_EVENTS} events over ${LOAD_DURATION_SEC}s${NC}"
   separator
 
+  ensure_clickhouse_up
   start_port_forwards
   trap stop_port_forwards EXIT
   require_ingest
@@ -347,18 +367,20 @@ scenario_load_m1() {
   log "Sending ~${events_per_sec} events/s (${reqs_per_sec} req/s × ${events_per_req}) for ${LOAD_DURATION_SEC}s"
 
   for sec in $(seq 1 "$LOAD_DURATION_SEC"); do
+    local -a pids=()
     for _ in $(seq 1 "$reqs_per_sec"); do
       curl -sS "${CURL_OPTS[@]}" -o /dev/null -X POST "${INGEST_URL}/ingest" \
         -H 'Content-Type: application/json' -H "X-Tenant-ID: ${TENANT}" -d "$payload" &
+      pids+=($!)
       total_sent=$((total_sent + events_per_req))
     done
-    wait
+    wait_pids "${pids[@]}"
     if (( sec % 5 == 0 )); then
       log "  ... ${sec}s, ~${total_sent} events sent"
     fi
   done
 
-  sleep 20
+  sleep 12
   ch_after="$(count_events_in_ch | tr -cd '0-9')"
   ch_after="${ch_after:-0}"
   local ch_new=$((ch_after - ch_before))

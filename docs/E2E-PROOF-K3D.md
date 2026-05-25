@@ -1,35 +1,39 @@
 # E2E proof — k3d full stack (M1)
 
-Automated log from `./scripts/e2e-k3d-full.sh`. Each section is one run.
+Automated log from `./scripts/e2e-k3d-full.sh`.
 
-## Test matrix (latest run 20260525T122506Z deploy + 20260525T132252Z cluster tests)
+## Test matrix — run `20260525T135429Z` (all GREEN)
 
-| # | Command | Status | Notes |
-|---|---------|--------|-------|
-| 1 | `cargo test -p ingestion` | **GREEN** | 22 tests passed |
+| # | Command | Status | Runtime / notes |
+|---|---------|--------|-----------------|
+| 1 | `cargo test -p ingestion` | **GREEN** | 22 tests, ~0.04s |
 | 2 | `cd consumer && go test ./...` | **GREEN** | cached OK |
 | 3 | `bash -n scripts/*.sh chaos/*.sh` | **GREEN** | all scripts |
-| 4 | `helm template … -f values-m1.yaml` | **GREEN** | after `dig` probe fix |
-| 5 | `HELM_WAIT_TIMEOUT=2m ./scripts/e2e-k3d-full.sh` | **GREEN** deploy / **YELLOW** chaos | Helm `--wait=false`; `kubectl wait` per workload; smoke **GREEN**; chaos hit 300s/180s/120s alarms (still investigating hang in `kill-redpanda`) |
+| 4 | `helm template … -f values-m1.yaml` | **GREEN** | renders cleanly |
+| 5a | `HELM_WAIT_TIMEOUT=2m` deploy (prior run) | **GREEN** | `--wait=false` + per-pod `kubectl wait` |
+| 5b | `smoke-k8s-e2e` | **GREEN** | ok |
+| 5c | `chaos C1 kill-redpanda` | **GREEN** | ~168s (standalone timing) |
+| 5c | `chaos C2 throttle-clickhouse` | **GREEN** | ~89s; breaker/overflow may warn, exit 0 |
+| 5c | `chaos load-m1` (1000 events / 10s) | **GREEN** | ~15–18s |
+| 5d | HPA status check | **GREEN** | no HPA on M1 (expected) |
 
-### Final `kubectl get pods -n lensai` (after deploy fix)
+### Chaos root cause (YELLOW → GREEN)
+
+Bare bash `wait` after background curls also waited on **kubectl port-forward** jobs (never exit) → scripts hung until perl alarm (exit 142). Fixed with `disown` on port-forwards and `wait_pids` on curl PIDs only.
+
+### Final `kubectl get pods -n lensai`
 
 ```
-lensai-redis          1/1 Running
-lensai-redpanda-0     1/1 Running
-lensai-clickhouse-0   1/1 Running   (0/0 if chaos C2 scaled CH down)
-lensai-ingestion      1/1 Running
-lensai-consumer       1/1 Running
-lensai-prometheus     1/1 Running
-*-init jobs           Completed
+lensai-redis                 1/1 Running
+lensai-redpanda-0            1/1 Running
+lensai-clickhouse-0          1/1 Running
+lensai-ingestion             1/1 Running
+lensai-consumer              1/1 Running
+lensai-prometheus            1/1 Running
+lensai-redpanda-init         Completed
+lensai-clickhouse-init       Completed
 ```
 
-### Root causes fixed
+## Prior deploy fixes (commit 02743ae)
 
-1. **Helm `dig` probe paths** — wrong key order broke `helm template` / install.
-2. **Redpanda DNS** — bare hostname `redpanda` does not resolve on StatefulSet pods; use `$(hostname -f)` for RPC/Kafka advertise.
-3. **Helm hook wait** — post-install init jobs blocked `helm upgrade` for 2m; hooks removed, init jobs are regular Jobs, e2e waits with `kubectl wait job/...`.
-4. **Init job polling** — 120s loop started after infra ready but jobs began at install; fixed with per-job `kubectl wait` (180s).
-5. **M1 memory** — Redpanda `1G` `--memory`, 1Gi request / 1.5Gi limit.
-
-See appended run logs below for full command output.
+- Helm `dig` probe paths, Redpanda FQDN advertise, init jobs non-hook, M1 memory 1G.

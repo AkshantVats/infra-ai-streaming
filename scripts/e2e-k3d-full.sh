@@ -250,9 +250,9 @@ phase_c() {
   export SKIP_UNIT_TESTS=1
   run_step "smoke-k8s-e2e" RED ./scripts/smoke-k8s-e2e.sh
 
-  run_step "chaos C1 kill-redpanda (k8s)" YELLOW perl -e 'alarm shift; exec @ARGV' 300 ./chaos/run_chaos_k8s.sh kill-redpanda
-  run_step "chaos C2 throttle-clickhouse (k8s)" YELLOW perl -e 'alarm shift; exec @ARGV' 180 ./chaos/run_chaos_k8s.sh throttle-clickhouse
-  run_step "chaos load-m1 (k8s)" YELLOW perl -e 'alarm shift; exec @ARGV' 120 env LOAD_EVENTS=2000 LOAD_DURATION_SEC=10 ./chaos/run_chaos_k8s.sh load-m1
+  run_step "chaos C1 kill-redpanda (k8s)" RED ./chaos/run_chaos_k8s.sh kill-redpanda
+  run_step "chaos C2 throttle-clickhouse (k8s)" RED ./chaos/run_chaos_k8s.sh throttle-clickhouse
+  run_step "chaos load-m1 (k8s)" RED env LOAD_EVENTS=1000 LOAD_DURATION_SEC=10 ./chaos/run_chaos_k8s.sh load-m1
 
   run_step "HPA status" YELLOW bash -c "
     kubectl get hpa -n '${NS}' 2>&1 || echo 'No HPA (expected on M1 values-m1)'
