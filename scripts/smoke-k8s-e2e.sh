@@ -12,9 +12,13 @@ echo "==> Waiting for pods in namespace ${NS}"
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance="${RELEASE}" -n "${NS}" --timeout=300s 2>/dev/null || true
 kubectl get pods -n "${NS}"
 
-echo "==> Unit tests (host)"
-cargo test -p ingestion
-(cd consumer && go test ./...)
+if [[ "${SKIP_UNIT_TESTS:-}" != "1" ]]; then
+  echo "==> Unit tests (host)"
+  cargo test -p ingestion
+  (cd consumer && go test ./...)
+else
+  echo "==> Unit tests skipped (SKIP_UNIT_TESTS=1)"
+fi
 
 PF_ING="${PF_ING_PID:-}"
 PF_CON="${PF_CON_PID:-}"

@@ -30,13 +30,11 @@ spec:
           livenessProbe:
             exec:
               command: ["clickhouse-client", "--query", "SELECT 1"]
-            initialDelaySeconds: 20
-            periodSeconds: 10
+            {{- include "lensai.execProbeTiming" (list (dig "probes" "liveness" dict .Values.clickhouse) (dict "initialDelaySeconds" 20 "periodSeconds" 10 "timeoutSeconds" 5 "failureThreshold" 3)) | nindent 12 }}
           readinessProbe:
             exec:
               command: ["clickhouse-client", "--query", "SELECT 1"]
-            initialDelaySeconds: 10
-            periodSeconds: 5
+            {{- include "lensai.execProbeTiming" (list (dig "probes" "readiness" dict .Values.clickhouse) (dict "initialDelaySeconds" 10 "periodSeconds" 5 "timeoutSeconds" 5 "failureThreshold" 3)) | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse

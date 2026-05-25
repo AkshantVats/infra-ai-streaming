@@ -5,6 +5,13 @@ ingestion:
   image:
     pullPolicy: Never
   replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 consumer:
   image:
@@ -14,25 +21,51 @@ consumer:
     minReplicas: 1
     maxReplicas: 4
     targetAverageValue: "500"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 150m
+      memory: 64Mi
 
 clickhouse:
   storage: 10Gi
   resources:
     requests:
-      cpu: 500m
-      memory: 1Gi
-    limits:
-      cpu: "2"
-      memory: 2Gi
-
-redpanda:
-  resources:
-    requests:
       cpu: 250m
       memory: 512Mi
     limits:
-      cpu: "1"
+      cpu: 500m
       memory: 1Gi
+
+redpanda:
+  memory: 512M
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 350m
+      memory: 512Mi
+
+prometheus:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi
 
 prometheusAdapter:
   enabled: true
