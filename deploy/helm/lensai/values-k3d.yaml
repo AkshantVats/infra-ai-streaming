@@ -5,6 +5,13 @@ ingestion:
   image:
     pullPolicy: Never
   replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 consumer:
   image:
@@ -14,6 +21,13 @@ consumer:
     minReplicas: 1
     maxReplicas: 4
     targetAverageValue: "500"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 redis:
   resources:
@@ -51,24 +65,6 @@ prometheus:
       memory: 128Mi
     limits:
       cpu: 150m
-      memory: 256Mi
-
-ingestion:
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 250m
-      memory: 256Mi
-
-consumer:
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 250m
       memory: 256Mi
 
 prometheusAdapter:

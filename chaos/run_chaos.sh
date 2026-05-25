@@ -89,8 +89,10 @@ count_events_in_ch() {
 }
 
 count_dlq() {
-  "${COMPOSE[@]}" exec -T redpanda rpk topic consume ai_inference_dlq \
-    --offset start --num 999999 --format '%v\n' 2>/dev/null | wc -l | tr -d ' '
+  local n
+  n="$(timeout 15 "${COMPOSE[@]}" exec -T redpanda rpk topic consume ai_inference_dlq \
+    --offset start --num 10000 --format '%v\n' 2>/dev/null | wc -l | awk '{print $1}')"
+  echo "${n:-0}"
 }
 
 metric_val() {
@@ -259,10 +261,11 @@ scenario_kill_redpanda() {
   log "Phase 6: Waiting 15s for consumer to flush to ClickHouse..."
   sleep 15
 
-  local ch_after
-  ch_after="$(count_events_in_ch)"
-  local dlq_count
-  dlq_count="$(count_dlq)"
+  local ch_after dlq_count
+  ch_after="$(count_events_in_ch | tr -cd '0-9')"
+  dlq_count="$(count_dlq | tr -cd '0-9')"
+  ch_after="${ch_after:-0}"
+  dlq_count="${dlq_count:-0}"
   local total_landed=$((ch_after + dlq_count))
   local total_sent=$((500 + wal_events))
 

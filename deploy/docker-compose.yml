@@ -32,7 +32,7 @@ services:
 
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
-    mem_limit: 512m
+    mem_limit: 576m
     cpus: 0.35
     env_file:
       - .env
