@@ -32,6 +32,24 @@ E2E with host binaries: see root `README.md` or [`../scripts/smoke-e2e.sh`](../s
 
 ---
 
+## One-command E2E on M1
+
+Single entry point: preflight unit tests → tear down compose → k3d + Helm (`values-m1.yaml`) → smoke + chaos + reduced load on the **same** cluster.
+
+```bash
+./scripts/e2e-k3d-full.sh
+```
+
+Optional: `CONTINUE_ON_FAIL=1` to run all steps and get a GREEN/YELLOW/RED summary; `SKIP_DEPLOY=1` if the cluster is already up. Proof log: [`docs/E2E-PROOF-K3D.md`](../docs/E2E-PROOF-K3D.md).
+
+**Why Helm used to wait ~15 minutes:** `helm upgrade --install --wait` blocks until every Deployment, StatefulSet, and hook Job is ready. On M1, Redpanda or the consumer often hit `CrashLoopBackOff` (OOM from tight memory limits, or probes firing before slow startup), so Helm sat until `--timeout` (formerly 15m). The e2e script now runs `helm upgrade` with a **2m** chart timeout (no global `--wait`), then `kubectl wait` per critical workload (default **120s** each). If pods are still not ready, it prints `kubectl describe` and `kubectl logs` and exits — fix values or cluster, then re-run.
+
+Override waits: `HELM_WAIT_TIMEOUT=2m` `POD_WAIT_TIMEOUT=120s`.
+
+M1 limits are in [`helm/lensai/values-m1.yaml`](helm/lensai/values-m1.yaml) (low CPU/mem, HPA off, Redpanda 1.5Gi limit / 1G `--memory`). If k3d OOMs, raise Docker memory or stop compose, then re-run.
+
+---
+
 ## k3d + Helm (Day 8 / G-07) — three commands
 
 **Prerequisites:** Docker ≥ 8 GB RAM, `k3d`, `helm`, `kubectl`, Rust 1.86, Go 1.22+.

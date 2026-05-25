@@ -74,6 +74,8 @@ services:
 
   redpanda-init:
     image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    mem_limit: 128m
+    cpus: 0.1
     depends_on:
       redpanda:
         condition: service_healthy
@@ -107,6 +109,8 @@ services:
 
   clickhouse-init:
     image: clickhouse/clickhouse-server:24.12-alpine
+    mem_limit: 256m
+    cpus: 0.15
     depends_on:
       clickhouse:
         condition: service_healthy

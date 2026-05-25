@@ -48,14 +48,12 @@ spec:
             httpGet:
               path: /health
               port: metrics
-            initialDelaySeconds: 15
-            periodSeconds: 10
+            {{- include "lensai.httpProbeTiming" (list (dig "probes" "liveness" dict .Values.consumer) (dict "initialDelaySeconds" 15 "periodSeconds" 10 "timeoutSeconds" 5 "failureThreshold" 3)) | nindent 12 }}
           readinessProbe:
             httpGet:
               path: /health
               port: metrics
-            initialDelaySeconds: 5
-            periodSeconds: 5
+            {{- include "lensai.httpProbeTiming" (list (dig "probes" "readiness" dict .Values.consumer) (dict "initialDelaySeconds" 5 "periodSeconds" 5 "timeoutSeconds" 5 "failureThreshold" 3)) | nindent 12 }}
           resources:
             {{- toYaml .Values.consumer.resources | nindent 12 }}
 ---

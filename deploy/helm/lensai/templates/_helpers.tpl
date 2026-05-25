@@ -26,3 +26,21 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/name: {{ include "lensai.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{- define "lensai.httpProbeTiming" -}}
+{{- $probe := index . 0 -}}
+{{- $defaults := index . 1 -}}
+initialDelaySeconds: {{ default $defaults.initialDelaySeconds $probe.initialDelaySeconds }}
+periodSeconds: {{ default $defaults.periodSeconds $probe.periodSeconds }}
+timeoutSeconds: {{ default $defaults.timeoutSeconds $probe.timeoutSeconds }}
+failureThreshold: {{ default $defaults.failureThreshold $probe.failureThreshold }}
+{{- end }}
+
+{{- define "lensai.execProbeTiming" -}}
+{{- $probe := index . 0 -}}
+{{- $defaults := index . 1 -}}
+initialDelaySeconds: {{ default $defaults.initialDelaySeconds $probe.initialDelaySeconds }}
+periodSeconds: {{ default $defaults.periodSeconds $probe.periodSeconds }}
+timeoutSeconds: {{ default $defaults.timeoutSeconds $probe.timeoutSeconds }}
+failureThreshold: {{ default $defaults.failureThreshold $probe.failureThreshold }}
+{{- end }}
