@@ -28,6 +28,17 @@ cargo run -p ingestion
 
 Grafana: http://localhost:3000/d/ai-inference-e2e-local (admin / admin).
 
+### Kubernetes (k3d / G-07)
+
+```bash
+./deploy/k3d/up.sh
+helm dependency update deploy/helm/lensai
+helm upgrade --install lensai deploy/helm/lensai -n lensai --create-namespace -f deploy/helm/lensai/values-k3d.yaml --wait --timeout 10m
+./scripts/smoke-k8s-e2e.sh
+```
+
+Ingestion WAL uses `emptyDir` in k3d — pod OOM/delete loses un-replayed segments until PVC is enabled. Reproduce ingestion OOM: `kubectl delete pod -n lensai -l app.kubernetes.io/component=ingestion` during ingest flood.
+
 ---
 
 ## Scenario 1 — Kafka broker dies mid-ingest
@@ -222,6 +233,50 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml unpause click
 | 3 | Redis lost | 202 (fail-open, no limits) | **Bypassed** | Normal | None (availability wins) | `redis_rate_limit_degraded_total` |
 | 4 | Ingest OOM | Down | Enforced (Redis persists) | Normal | None (WAL replay, at-least-once) | `wal_replay_events_total` |
 | 5 | Network partition | 202 | Enforced | Breaker open, lag grows | None (offsets replay) | `kafka_consumer_lag_events`, `circuit_breaker_state` |
+
+---
+
+## Automated chaos scenarios (`chaos/run_chaos.sh`)
+
+Three scripted scenarios that can be run independently or together. Each scenario
+emits structured PASS/FAIL results and captures the metrics that matter.
+
+```bash
+# Prerequisites: compose stack + consumer + ingestion running (see top of file)
+./chaos/run_chaos.sh kill-redpanda        # Scenario C1
+./chaos/run_chaos.sh throttle-clickhouse  # Scenario C2
+./chaos/run_chaos.sh load-10k             # Scenario C3
+./chaos/run_chaos.sh all                  # All three sequentially
+```
+
+**Consumer tuning for 10k/s:** Restart the consumer with `BATCH_SIZE=5000` (default
+is 1000) so it can flush fast enough to keep up with sustained high throughput.
+
+### C1 — kill-redpanda (broker crash + WAL replay)
+
+| Field | Expected | Actual | Evidence |
+|-------|----------|--------|----------|
+| Events accepted during outage | HTTP 202 (WAL buffers) | _run script_ | `kafka_produce_errors_total` rises |
+| WAL replay on restart | `wal_replay_events_total` spikes | _run script_ | Ingestion logs + metrics |
+| Data loss | **Zero** (CH + DLQ ≥ sent) | _run script_ | Script prints landed vs sent |
+
+### C2 — throttle-clickhouse (circuit breaker + Redis overflow)
+
+| Field | Expected | Actual | Evidence |
+|-------|----------|--------|----------|
+| Breaker opens during pause | `circuit_breaker_state{open}=1` | _run script_ | Consumer metrics |
+| Overflow buffering | `redis_overflow_depth > 0` | _run script_ | Consumer metrics |
+| Breaker closes on recovery | `circuit_breaker_state{open}=0` | _run script_ | Consumer metrics |
+| Overflow drains | Depth decreases after unpause | _run script_ | Consumer metrics |
+
+### C3 — load-10k (sustained throughput)
+
+| Field | Expected | Actual | Evidence |
+|-------|----------|--------|----------|
+| Target ingest rate | 10,000 events/sec | _run script_ | Wall-clock / events-sent |
+| Delivery rate | ≥95% (CH rows / sent) | _run script_ | ClickHouse count before/after |
+| CH flush p99 | < 2s | _run script_ | `clickhouse_flush_duration_seconds{quantile="0.99"}` |
+| Consumer lag after drain | ~0 | _run script_ | `kafka_consumer_lag_events` |
 
 ---
 
