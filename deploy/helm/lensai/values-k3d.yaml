@@ -15,24 +15,61 @@ consumer:
     maxReplicas: 4
     targetAverageValue: "500"
 
-clickhouse:
-  storage: 10Gi
+redis:
   resources:
     requests:
-      cpu: 500m
-      memory: 1Gi
+      cpu: 50m
+      memory: 32Mi
     limits:
-      cpu: "2"
-      memory: 2Gi
+      cpu: 150m
+      memory: 64Mi
 
-redpanda:
+clickhouse:
+  storage: 10Gi
   resources:
     requests:
       cpu: 250m
       memory: 512Mi
     limits:
-      cpu: "1"
+      cpu: 500m
       memory: 1Gi
+
+redpanda:
+  memory: 512M
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 350m
+      memory: 512Mi
+
+prometheus:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi
+
+ingestion:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+consumer:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 prometheusAdapter:
   enabled: true

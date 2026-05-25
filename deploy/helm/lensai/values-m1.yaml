@@ -5,12 +5,45 @@
 
 ingestion:
   replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 consumer:
   hpa:
     enabled: false
     minReplicas: 1
     maxReplicas: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 150m
+      memory: 64Mi
+
+redpanda:
+  memory: 512M
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 350m
+      memory: 512Mi
 
 clickhouse:
   storage: 5Gi
@@ -19,17 +52,17 @@ clickhouse:
       cpu: 250m
       memory: 512Mi
     limits:
-      cpu: "1"
+      cpu: 500m
       memory: 1Gi
 
-redpanda:
+prometheus:
   resources:
     requests:
-      cpu: 100m
-      memory: 256Mi
+      cpu: 50m
+      memory: 128Mi
     limits:
-      cpu: "0.5"
-      memory: 768Mi
+      cpu: 150m
+      memory: 256Mi
 
 prometheusAdapter:
   enabled: false

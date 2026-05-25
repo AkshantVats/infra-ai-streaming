@@ -14,13 +14,11 @@
 
 name: infra-ai-streaming
 
-# M1 / laptop: mem_limit & cpus (docker compose desktop)
-
 services:
   redis:
-    mem_limit: 128m
-    cpus: 0.25
     image: redis:7-alpine
+    mem_limit: 64m
+    cpus: 0.15
     ports:
       - "6379:6379"
     env_file:
@@ -33,9 +31,9 @@ services:
       start_period: 5s
 
   redpanda:
-    mem_limit: 768m
-    cpus: 0.5
     image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    mem_limit: 512m
+    cpus: 0.35
     env_file:
       - .env
     command:
@@ -75,8 +73,6 @@ services:
       start_period: 30s
 
   redpanda-init:
-    mem_limit: 256m
-    cpus: 0.25
     image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
     depends_on:
       redpanda:
@@ -91,9 +87,9 @@ services:
     restart: "no"
 
   clickhouse:
-    mem_limit: 1536m
-    cpus: 1.0
     image: clickhouse/clickhouse-server:24.12-alpine
+    mem_limit: 1024m
+    cpus: 0.5
     ports:
       - "8123:8123"
       - "9000:9000"
@@ -110,8 +106,6 @@ services:
       start_period: 20s
 
   clickhouse-init:
-    mem_limit: 512m
-    cpus: 0.5
     image: clickhouse/clickhouse-server:24.12-alpine
     depends_on:
       clickhouse:
@@ -126,9 +120,9 @@ services:
     restart: "no"
 
   prometheus:
-    mem_limit: 384m
-    cpus: 0.25
     image: prom/prometheus:v2.54.1
+    mem_limit: 256m
+    cpus: 0.15
     ports:
       - "9090:9090"
     volumes:
@@ -147,9 +141,9 @@ services:
       start_period: 10s
 
   grafana:
-    mem_limit: 384m
-    cpus: 0.25
     image: grafana/grafana:11.3.0
+    mem_limit: 256m
+    cpus: 0.15
     ports:
       - "3000:3000"
     environment:

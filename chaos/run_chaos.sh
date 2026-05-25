@@ -107,13 +107,48 @@ require_service() {
   fi
 }
 
+restart_ingestion() {
+  log "Restarting ingestion (WAL replay)..."
+  pkill -f 'target/debug/ingestion' 2>/dev/null || true
+  pkill -f 'target/release/ingestion' 2>/dev/null || true
+  pkill -f '/tmp/lensai-ingestion' 2>/dev/null || true
+  sleep 2
+  local bin="${INGEST_BIN:-}"
+  if [[ -z "$bin" ]]; then
+    if [[ -x target/debug/ingestion ]]; then
+      bin="target/debug/ingestion"
+    elif [[ -x target/release/ingestion ]]; then
+      bin="target/release/ingestion"
+    else
+      warn "No ingestion binary — build with: cargo build -p ingestion"
+      return 1
+    fi
+  fi
+  set -a
+  # shellcheck source=/dev/null
+  source deploy/.env
+  set +a
+  nohup "$bin" > /tmp/lensai-ingestion.log 2>&1 &
+  local i=0
+  while (( i < 30 )); do
+    if curl -sf "${INGEST_URL}/health" >/dev/null 2>&1; then
+      pass "Ingestion back on ${INGEST_URL}"
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  fail "Ingestion did not become healthy after restart (see /tmp/lensai-ingestion.log)"
+  return 1
+}
+
 make_event_payload() {
   local n="${1:-1}" tenant="${2:-$TENANT}"
   local events=""
   for i in $(seq 1 "$n"); do
     local ts; ts="$(ts_ms)"
     [[ -n "$events" ]] && events="${events},"
-    events="${events}{\"tenant_id\":\"${tenant}\",\"model_id\":\"gpt-4o\",\"timestamp_unix_ms\":${ts},\"latency_ms\":$((RANDOM % 500 + 50)),\"prompt_tokens\":$((RANDOM % 1000 + 10)),\"completion_tokens\":$((RANDOM % 500 + 5)),\"cost_usd\":0.00$((RANDOM % 999)),\"status\":\"success\"}"
+    events="${events}{\"tenant_id\":\"${tenant}\",\"model_id\":\"gpt-4o\",\"timestamp_unix_ms\":${ts},\"latency_ms\":$((RANDOM % 500 + 50)),\"prompt_tokens\":$((RANDOM % 1000 + 10)),\"completion_tokens\":$((RANDOM % 500 + 5)),\"cost_usd\":0.00$((RANDOM % 900 + 1)),\"status\":\"success\"}"
   done
   echo "{\"events\":[${events}]}"
 }
@@ -210,10 +245,7 @@ scenario_kill_redpanda() {
 
   # Phase 5: restart ingestion for WAL replay
   log "Phase 5: Restart ingestion to trigger WAL replay..."
-  warn ">>> Please restart ingestion now: cargo run -p ingestion"
-  warn ">>> Or kill the running process and re-launch."
-  warn ">>> Waiting 15s for ingestion to come back up..."
-  sleep 15
+  restart_ingestion || warn "Manual restart: cargo run -p ingestion"
 
   if curl -sf "${INGEST_URL}/health" >/dev/null 2>&1; then
     local replay_count
