@@ -50,9 +50,15 @@ M1 limits are in [`helm/lensai/values-m1.yaml`](helm/lensai/values-m1.yaml) (low
 
 ---
 
-## k3d + Helm (Day 8 / G-07) — three commands
+## k3d + Helm — manual steps (M1 default)
+
+**On a laptop, prefer the one-command path above.** For step-by-step debugging, use **`values-m1.yaml`** (not default `values.yaml` or `values-k3d.yaml`).
 
 **Prerequisites:** Docker ≥ 8 GB RAM, `k3d`, `helm`, `kubectl`, Rust 1.86, Go 1.22+.
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml down
+```
 
 ### 1) Cluster + images
 
@@ -62,17 +68,21 @@ M1 limits are in [`helm/lensai/values-m1.yaml`](helm/lensai/values-m1.yaml) (low
 
 Creates cluster `lensai`, builds `lensai/ingestion:local` and `lensai/consumer:local`, imports into k3d.
 
-### 2) Helm install
+### 2) Helm install (M1)
 
 ```bash
 helm dependency update deploy/helm/lensai
-helm upgrade --install lensai deploy/helm/lensai \
+HELM_WAIT_TIMEOUT=2m helm upgrade --install lensai deploy/helm/lensai \
   -n lensai --create-namespace \
-  -f deploy/helm/lensai/values-k3d.yaml \
-  --wait --timeout 10m
+  -f deploy/helm/lensai/values-m1.yaml \
+  --timeout "${HELM_WAIT_TIMEOUT}" \
+  --wait=false
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=lensai -n lensai --timeout=120s
 ```
 
-Stack: Redis, Redpanda, ClickHouse, **ingestion** (2 replicas, PDB, tenant ConfigMap), **consumer** (HPA on `kafka_consumer_lag_sum`), in-cluster Prometheus + prometheus-adapter.
+Stack: Redis, Redpanda, ClickHouse, ingestion + consumer (1 replica each on M1; HPA off). Topics include `ai_anomalies` for G-09.
+
+**Full HPA / 2-replica demo (workstation only):** use `values-k3d.yaml` with `--wait --timeout 10m` — not recommended on M1.
 
 ### 3) Verify
 
@@ -80,7 +90,7 @@ Stack: Redis, Redpanda, ClickHouse, **ingestion** (2 replicas, PDB, tenant Confi
 ./scripts/smoke-k8s-e2e.sh
 ```
 
-Port-forward is used inside the smoke script. Optional HPA watch:
+Port-forward is used inside the smoke script. HPA demo (k3d values only):
 
 ```bash
 ./scripts/demo-hpa-lag.sh
@@ -111,7 +121,7 @@ Port-forward is used inside the smoke script. Optional HPA watch:
 ### Manual verify (no k3d in CI)
 
 ```bash
-helm template lensai deploy/helm/lensai -f deploy/helm/lensai/values-k3d.yaml > /tmp/lensai.yaml
+helm template lensai deploy/helm/lensai -f deploy/helm/lensai/values-m1.yaml > /tmp/lensai.yaml
 cargo test -p ingestion && (cd consumer && go test ./...)
 ```
 

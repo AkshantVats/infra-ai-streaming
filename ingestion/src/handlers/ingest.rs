@@ -90,10 +90,9 @@ impl ValidationError {
             .with_label_values(&[self.metric_label()])
             .inc();
         let (status, body) = match self {
-            ValidationError::EmptyBatch => (
-                StatusCode::BAD_REQUEST,
-                json!({"error": "empty_batch"}),
-            ),
+            ValidationError::EmptyBatch => {
+                (StatusCode::BAD_REQUEST, json!({"error": "empty_batch"}))
+            }
             ValidationError::BatchTooLarge { max } => (
                 StatusCode::BAD_REQUEST,
                 json!({"error": "batch_too_large", "max": max}),
@@ -102,14 +101,12 @@ impl ValidationError {
                 StatusCode::BAD_REQUEST,
                 json!({"error": "invalid_latency", "event_id": event_id}),
             ),
-            ValidationError::InvalidCost => (
-                StatusCode::BAD_REQUEST,
-                json!({"error": "invalid_cost"}),
-            ),
-            ValidationError::EventTooOld => (
-                StatusCode::BAD_REQUEST,
-                json!({"error": "event_too_old"}),
-            ),
+            ValidationError::InvalidCost => {
+                (StatusCode::BAD_REQUEST, json!({"error": "invalid_cost"}))
+            }
+            ValidationError::EventTooOld => {
+                (StatusCode::BAD_REQUEST, json!({"error": "event_too_old"}))
+            }
         };
         (status, Json(body)).into_response()
     }
@@ -262,9 +259,7 @@ pub async fn handle_ingest(
         )
             .into_response();
         if let Ok(value) = HeaderValue::from_str(&retry_secs.to_string()) {
-            response
-                .headers_mut()
-                .insert("retry-after", value);
+            response.headers_mut().insert("retry-after", value);
         }
         return response;
     }
@@ -382,10 +377,7 @@ mod tests {
     fn validate_rejects_oversized_batch() {
         let events: Vec<_> = (0..3).map(|_| sample_event(1_000_000, 1, 0.0)).collect();
         let err = validate_events(&events, 2, 3600_000, 1_000_000).unwrap_err();
-        assert_eq!(
-            err,
-            ValidationError::BatchTooLarge { max: 2 }
-        );
+        assert_eq!(err, ValidationError::BatchTooLarge { max: 2 });
     }
 
     #[test]

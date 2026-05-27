@@ -1,0 +1,18 @@
+{{- if and .Values.ingestion.enabled .Values.ingestion.wal.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "lensai.fullname" . }}-ingestion-wal
+  labels:
+    {{- include "lensai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.ingestion.wal.persistence.size }}
+  {{- with .Values.ingestion.wal.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

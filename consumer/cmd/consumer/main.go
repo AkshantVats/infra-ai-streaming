@@ -7,6 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/akshantvats/infra-ai-streaming/consumer/internal/anomaly"
+	"github.com/akshantvats/infra-ai-streaming/consumer/internal/buildinfo"
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/clickhouse"
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/config"
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/kafka"
@@ -16,6 +18,12 @@ import (
 
 func main() {
 	cfg := config.LoadFromEnv()
+	log.Printf(
+		"level=info msg=consumer_starting version=%s git_sha=%s build_time=%s",
+		buildinfo.Version,
+		buildinfo.GitSHA,
+		buildinfo.BuildTime,
+	)
 	m := metrics.New()
 	metrics.StartServer(cfg.MetricsPort)
 
@@ -34,6 +42,17 @@ func main() {
 	}
 	defer dlq.Close()
 
+	detector := anomaly.NewZScoreLatencyDetector(
+		cfg.AnomalyZScoreThreshold,
+		cfg.AnomalyWindowSize,
+		cfg.AnomalyMinSamples,
+	)
+	anomalyPublisher, err := kafka.NewAnomalyPublisher(cfg.KafkaBrokers, cfg.KafkaAnomaliesTopic, m)
+	if err != nil {
+		log.Fatalf("level=fatal msg=anomalies_init_failed err=%v", err)
+	}
+	defer anomalyPublisher.Close()
+
 	writer, err := clickhouse.NewBatchWriter(ctx, cfg, overflow, dlq, m)
 	if err != nil {
 		log.Fatalf("level=fatal msg=clickhouse_init_failed err=%v", err)
@@ -42,7 +61,7 @@ func main() {
 
 	go writer.Start(ctx)
 
-	reader, err := kafka.NewReader(cfg, writer, m)
+	reader, err := kafka.NewReader(cfg, writer, m, detector, anomalyPublisher)
 	if err != nil {
 		log.Fatalf("level=fatal msg=consumer_init_failed err=%v", err)
 	}

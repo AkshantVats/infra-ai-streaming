@@ -6,6 +6,7 @@ redis:
   enabled: true
   image: redis:7-alpine
   replicas: 1
+  probes: {}
   resources:
     requests:
       cpu: 50m
@@ -50,6 +51,11 @@ ingestion:
   replicas: 2
   httpPort: 8080
   walDir: /data/wal
+  wal:
+    persistence:
+      enabled: false
+      size: 1Gi
+      storageClassName: ""
   tenantLimitsPath: /config/tenant-limits.json
   resources:
     requests:
@@ -126,6 +132,7 @@ prometheus-adapter:
 kafka:
   topic: ai_inference_events
   dlqTopic: ai_inference_dlq
+  anomaliesTopic: ai_anomalies
   brokers: redpanda:9092
 
 redisUrl: redis://redis:6379

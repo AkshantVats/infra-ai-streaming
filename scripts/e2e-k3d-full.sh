@@ -99,6 +99,18 @@ run_step() {
   return "$ec"
 }
 
+# `if ! phase_*` disables errexit inside phases; use run_step_or_abort (not `||`).
+phase_abort_on_red() {
+  [[ "${CONTINUE_ON_FAIL:-0}" == "1" ]] || return 1
+}
+
+run_step_or_abort() {
+  if ! run_step "$@"; then
+    phase_abort_on_red
+  fi
+}
+
+# shellcheck disable=SC2329,SC2317
 require_cmd() {
   local c="$1"
   command -v "$c" >/dev/null 2>&1 || { echo "Missing required command: $c" >&2; return 1; }
@@ -112,6 +124,7 @@ kill_stale_e2e() {
     log "Stopping stale e2e process pid=${pid}"
     kill "$pid" 2>/dev/null || true
   done < <(pgrep -f '[/]scripts/e2e-k3d-full\.sh' 2>/dev/null || true)
+  pkill -f 'kubectl port-forward.*(svc/ingestion|svc/consumer)' 2>/dev/null || true
 }
 
 diagnose_not_ready() {
@@ -195,19 +208,19 @@ phase_a() {
     record_step "preflight-skip" "YELLOW" "SKIP_PREFLIGHT=1"
     return 0
   fi
-  run_step "cargo test ingestion" RED cargo test -p ingestion
-  run_step "go test consumer" RED bash -c 'cd consumer && go test ./...'
-  run_step "helm template values-m1" RED helm template "${RELEASE}" "${HELM_CHART}" \
+  run_step_or_abort "cargo test ingestion" RED cargo test -p ingestion
+  run_step_or_abort "go test consumer" RED bash -c 'cd consumer && go test ./...'
+  run_step_or_abort "helm template values-m1" RED helm template "${RELEASE}" "${HELM_CHART}" \
     -f "${VALUES_M1}" --namespace "${NS}" >/dev/null
   local sh
   for sh in scripts/*.sh chaos/*.sh; do
     [[ -f "$sh" ]] || continue
-    run_step "bash -n ${sh}" RED bash -n "$sh"
+    run_step_or_abort "bash -n ${sh}" RED bash -n "$sh"
   done
-  run_step "check docker" RED require_cmd docker
-  run_step "check k3d" RED require_cmd k3d
-  run_step "check helm" RED require_cmd helm
-  run_step "check kubectl" RED require_cmd kubectl
+  run_step_or_abort "check docker" RED require_cmd docker
+  run_step_or_abort "check k3d" RED require_cmd k3d
+  run_step_or_abort "check helm" RED require_cmd helm
+  run_step_or_abort "check kubectl" RED require_cmd kubectl
 }
 
 # ── Phase B: Deploy ──────────────────────────────────────────────────────────
@@ -226,9 +239,9 @@ phase_b() {
     run_step "k3d cluster delete ${CLUSTER}" YELLOW k3d cluster delete "${CLUSTER}" || true
   fi
 
-  run_step "k3d up (cluster + images)" RED ./deploy/k3d/up.sh
-  run_step "helm dependency update" RED helm dependency update "${HELM_CHART}"
-  run_step "helm upgrade --install (values-m1)" RED helm upgrade --install "${RELEASE}" "${HELM_CHART}" \
+  run_step_or_abort "k3d up (cluster + images)" RED ./deploy/k3d/up.sh
+  run_step_or_abort "helm dependency update" RED helm dependency update "${HELM_CHART}"
+  run_step_or_abort "helm upgrade --install (values-m1)" RED helm upgrade --install "${RELEASE}" "${HELM_CHART}" \
     -n "${NS}" --create-namespace \
     -f "${VALUES_M1}" \
     --timeout "${HELM_WAIT_TIMEOUT}" \
@@ -239,7 +252,7 @@ phase_b() {
     record_step "wait pods + init jobs" "GREEN" "all critical workloads ready"
   else
     record_step "wait pods + init jobs" "RED" "see diagnostics in proof log"
-    return 1
+    phase_abort_on_red
   fi
 }
 
@@ -248,11 +261,15 @@ phase_c() {
   log "${BOLD}Phase C — Tests on cluster (sequential)${NC}"
 
   export SKIP_UNIT_TESTS=1
-  run_step "smoke-k8s-e2e" RED ./scripts/smoke-k8s-e2e.sh
+  export CH_READY_TIMEOUT_SEC="${CH_READY_TIMEOUT_SEC:-300}"
+  export REDPANDA_READY_TIMEOUT_SEC="${REDPANDA_READY_TIMEOUT_SEC:-300}"
+  run_step_or_abort "smoke-k8s-e2e" RED ./scripts/smoke-k8s-e2e.sh
 
-  run_step "chaos C1 kill-redpanda (k8s)" RED ./chaos/run_chaos_k8s.sh kill-redpanda
-  run_step "chaos C2 throttle-clickhouse (k8s)" RED ./chaos/run_chaos_k8s.sh throttle-clickhouse
-  run_step "chaos load-m1 (k8s)" RED env LOAD_EVENTS=1000 LOAD_DURATION_SEC=10 ./chaos/run_chaos_k8s.sh load-m1
+  run_step_or_abort "chaos C1 kill-redpanda (k8s)" RED env REDPANDA_READY_TIMEOUT_SEC="${REDPANDA_READY_TIMEOUT_SEC}" \
+    ./chaos/run_chaos_k8s.sh kill-redpanda
+  run_step_or_abort "chaos C2 throttle-clickhouse (k8s)" RED env CH_READY_TIMEOUT_SEC="${CH_READY_TIMEOUT_SEC}" \
+    ./chaos/run_chaos_k8s.sh throttle-clickhouse
+  run_step_or_abort "chaos load-m1 (k8s)" RED env LOAD_EVENTS=1000 LOAD_DURATION_SEC=10 ./chaos/run_chaos_k8s.sh load-m1
 
   run_step "HPA status" YELLOW bash -c "
     kubectl get hpa -n '${NS}' 2>&1 || echo 'No HPA (expected on M1 values-m1)'
@@ -313,16 +330,21 @@ fi
   echo "CONTINUE_ON_FAIL=${CONTINUE_ON_FAIL}"
   echo "HELM_WAIT_TIMEOUT=${HELM_WAIT_TIMEOUT}"
   echo "POD_WAIT_TIMEOUT=${POD_WAIT_TIMEOUT}"
+  echo "CH_READY_TIMEOUT_SEC=${CH_READY_TIMEOUT_SEC:-300}"
+  echo "REDPANDA_READY_TIMEOUT_SEC=${REDPANDA_READY_TIMEOUT_SEC:-300}"
 } >"$PROOF_TMP"
 
 main_ec=0
-phase_a || main_ec=1
+if ! phase_a; then main_ec=1; fi
 if [[ "$main_ec" -eq 0 ]] || [[ "$CONTINUE_ON_FAIL" == "1" ]]; then
-  phase_b || main_ec=1
+  if ! phase_b; then main_ec=1; fi
 fi
 if [[ "$main_ec" -eq 0 ]] || [[ "$CONTINUE_ON_FAIL" == "1" ]]; then
-  phase_c || main_ec=1
+  if ! phase_c; then main_ec=1; fi
 fi
+for st in "${STEP_STATUS[@]}"; do
+  [[ "$st" == "RED" ]] && main_ec=1 && break
+done
 
 proof_append
 print_summary

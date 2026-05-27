@@ -207,7 +207,7 @@ scenario_kill_redpanda() {
   sleep 3
 
   local ch_before
-  ch_before="$(count_events_in_ch)"
+  ch_before="$(count_events_in_ch "$TENANT")"
   log "ClickHouse rows before kill: ${ch_before}"
 
   # Phase 2: kill Redpanda
@@ -302,7 +302,7 @@ scenario_throttle_clickhouse() {
   local cb_before overflow_before ch_before
   cb_before="$(metric_val "$METRICS_CONSUMER" 'circuit_breaker_state\{state="open"\}')"
   overflow_before="$(metric_val "$METRICS_CONSUMER" 'redis_overflow_depth')"
-  ch_before="$(count_events_in_ch)"
+  ch_before="$(count_events_in_ch "$TENANT")"
   log "Baseline — breaker_open: ${cb_before:-0}, overflow: ${overflow_before:-0}, CH rows: ${ch_before}"
 
   # Phase 1: pause ClickHouse (simulates network hang, not clean stop)
@@ -347,7 +347,7 @@ scenario_throttle_clickhouse() {
   local cb_after overflow_after ch_after
   cb_after="$(metric_val "$METRICS_CONSUMER" 'circuit_breaker_state\{state="open"\}')"
   overflow_after="$(metric_val "$METRICS_CONSUMER" 'redis_overflow_depth')"
-  ch_after="$(count_events_in_ch)"
+  ch_after="$(count_events_in_ch "$TENANT")"
 
   separator
   echo -e "${BOLD}RESULTS — throttle-clickhouse${NC}"
@@ -405,7 +405,7 @@ scenario_load_10k() {
   log "     (default is 1000; restart consumer with BATCH_SIZE=5000)"
 
   local ch_before
-  ch_before="$(count_events_in_ch)"
+  ch_before="$(count_events_in_ch "$TENANT")"
   local start_time; start_time="$(date +%s)"
 
   # Run the load generator (100 events/request × 100 req/s = 10k events/s)
@@ -421,7 +421,7 @@ scenario_load_10k() {
   sleep 30
 
   local ch_after
-  ch_after="$(count_events_in_ch)"
+  ch_after="$(count_events_in_ch "$TENANT")"
   local ch_new=$((ch_after - ch_before))
   local actual_rate=0
   if (( wall_sec > 0 )); then

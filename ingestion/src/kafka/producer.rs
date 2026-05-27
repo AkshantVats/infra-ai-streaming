@@ -57,12 +57,7 @@ impl KafkaProducer {
         wal: Arc<Mutex<WalWriter>>,
     ) -> anyhow::Result<()> {
         match self
-            .send_to_topic(
-                &self.topic,
-                &msg.partition_key,
-                &msg.payload,
-                &msg.batch_id,
-            )
+            .send_to_topic(&self.topic, &msg.partition_key, &msg.payload, &msg.batch_id)
             .await
         {
             Ok(()) => {

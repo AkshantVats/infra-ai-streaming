@@ -2,7 +2,7 @@
 
 **Sub-100ms AI inference observability at 1M events/min — Kafka-backed, ClickHouse-native, multi-tenant.**
 
-**Honest status:** the repo ships a tested **Rust ingestion library** and **runnable `ingestion` binary**, a **Go consumer** (Kafka → ClickHouse batch writer, circuit breaker, Redis overflow, DLQ), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). See [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md), **[docs/ARCHITECTURE-AND-FLOWS.md](docs/ARCHITECTURE-AND-FLOWS.md)** (architecture, lifecycles, observability matrix), [OBSERVABILITY.md](OBSERVABILITY.md), and [CHAOS.md](CHAOS.md) (five failure scenarios with local repro). Build plan: [docs/7-day-plan.md](docs/7-day-plan.md).
+**Honest status:** the repo ships a tested **Rust ingestion library** and **runnable `ingestion` binary**, a **Go consumer** (Kafka → ClickHouse batch writer, circuit breaker, Redis overflow, DLQ), CI, design docs, and a **local Docker stack** (Redis, Redpanda, ClickHouse, Prometheus, Grafana). See [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md), **[docs/ARCHITECTURE-AND-FLOWS.md](docs/ARCHITECTURE-AND-FLOWS.md)** (architecture, lifecycles, observability matrix), [OBSERVABILITY.md](OBSERVABILITY.md), and [CHAOS.md](CHAOS.md) (five failure scenarios with local repro).
 
 [![CI](https://github.com/AkshantVats/infra-ai-streaming/actions/workflows/ci.yml/badge.svg)](https://github.com/AkshantVats/infra-ai-streaming/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -87,8 +87,8 @@ flowchart LR
 
 Implemented vs planned (see [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md)):
 
-- **Rust (Axum) HTTP ingestion** *(Day 3)*: `POST /ingest`, schema validation, Redis rate limits, bounded `mpsc` backpressure (`503` + `Retry-After` when the channel is full).
-- **WAL before Kafka produce** *(Day 3)*: segment WAL + fsync before accept; unacked replay on startup; `mark_acked` after broker delivery (at-least-once).
+- **Rust (Axum) HTTP ingestion**: `POST /ingest`, schema validation, Redis rate limits, bounded `mpsc` backpressure (`503` + `Retry-After` when the channel is full).
+- **WAL before Kafka produce**: segment WAL + fsync before accept; unacked replay on startup; `mark_acked` after broker delivery (at-least-once).
 - **Kafka / Redpanda**: `ai_inference_events` as primary stream; `ai_inference_dlq` for poison or persistently failing batches.
 - **Go stream consumer**: franz-go reader; **1000 events or 500ms** batch flush to ClickHouse; **circuit breaker** (5 failures → open, 30s half-open); **Redis LIST overflow**; **DLQ** after 3 insert retries; offsets commit after handoff.
 - **Redis**: distributed **token-bucket rate limit per `tenant_id`** on ingest (per-tenant config via `TENANT_LIMITS_PATH` JSON file — see `deploy/tenant-limits.example.json`); **overflow buffer** when ClickHouse is slow or unavailable. **Fail-open** when Redis is unavailable (documented in [CHAOS.md](CHAOS.md) §3).
@@ -205,6 +205,23 @@ Login: `admin` / `admin`. Canonical JSON: [`dashboards/`](dashboards/). Details:
 
 Scrape failures, stuck Kafka offsets, empty ClickHouse Grafana panels, breaker/overflow: [docs/ARCHITECTURE-AND-FLOWS.md#8-troubleshooting](docs/ARCHITECTURE-AND-FLOWS.md#8-troubleshooting).
 
+### CI and E2E
+
+| Workflow | When | What |
+|----------|------|------|
+| [CI](.github/workflows/ci.yml) | Every PR / push to `main` | Rust fmt/clippy/test, Go test, Helm template, shellcheck, gitleaks |
+| [E2E k3d](.github/workflows/e2e-k3d-dispatch.yml) | Weekly cron + manual dispatch | Full `./scripts/e2e-k3d-full.sh` on k3d with `values-m1.yaml` (30m timeout) |
+
+Local full E2E: `HELM_WAIT_TIMEOUT=2m ./scripts/e2e-k3d-full.sh`. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Production readiness (OSS/prod posture)
+
+- [`docs/PRODUCTION-READINESS-CHECKLIST.md`](docs/PRODUCTION-READINESS-CHECKLIST.md) — operational posture
+- [`docs/SLOs.md`](docs/SLOs.md) — latency, availability, lag targets + PromQL sketches
+- [`docs/DATA-RETENTION.md`](docs/DATA-RETENTION.md) — ClickHouse TTL, WAL, Kafka retention
+- [`docs/SECURITY-HARDENING.md`](docs/SECURITY-HARDENING.md) — TLS, secrets, no `.env` in prod
+- [`docs/E2E-PROOF-K3D.md`](docs/E2E-PROOF-K3D.md) — latest k3d proof log
+
 <!-- After smoke ingest, capture http://localhost:3000/d/ai-inference-product → docs/screenshots/grafana-product-slo.png -->
 <!-- ![Grafana Product SLO dashboard](docs/screenshots/grafana-product-slo.png) -->
 
@@ -250,7 +267,7 @@ Ingest optimizes **availability** and **honest overload behavior**: prefer accep
 ```
 infra-ai-streaming/
 ├── ingestion/          # Rust — Axum binary, WAL, Kafka producer, rate limit client
-├── consumer/           # Go — Kafka reader (stdout Day 4; CH writer Day 5)
+├── consumer/           # Go — Kafka reader and ClickHouse writer
 ├── deploy/             # docker-compose, Prometheus, Grafana, ClickHouse init
 ├── dashboards/         # Grafana JSON exports
 ├── load-test/          # k6 scripts

@@ -101,10 +101,7 @@ fn segments_with_unacked_count(base_dir: &Path) -> anyhow::Result<i64> {
 
 fn sync_buf(writer: &mut BufWriter<File>) -> anyhow::Result<()> {
     writer.flush().context("wal buf flush")?;
-    writer
-        .get_mut()
-        .sync_all()
-        .context("wal file fsync")?;
+    writer.get_mut().sync_all().context("wal file fsync")?;
     Ok(())
 }
 
@@ -122,7 +119,8 @@ impl WalWriter {
     /// Open or create WAL under `base_dir`.
     pub fn new(base_dir: &str) -> anyhow::Result<Self> {
         let base_path = PathBuf::from(base_dir);
-        fs::create_dir_all(&base_path).with_context(|| format!("create_dir_all {}", base_path.display()))?;
+        fs::create_dir_all(&base_path)
+            .with_context(|| format!("create_dir_all {}", base_path.display()))?;
         fs::create_dir_all(base_path.join("acks"))
             .with_context(|| format!("create acks under {}", base_path.display()))?;
 
@@ -200,7 +198,7 @@ impl WalWriter {
         };
         let line = serde_json::to_string(&entry).context("serialize WalEntry")?;
         let line_with_nl = format!("{line}\n");
-        let line_bytes = line_with_nl.as_bytes().len();
+        let line_bytes = line_with_nl.len();
 
         if self.current_bytes.saturating_add(line_bytes) > self.max_segment_bytes {
             self.rotate().context("wal segment rotate")?;
@@ -239,7 +237,8 @@ impl WalWriter {
         let mut out = Vec::new();
         for seg_id in list_segment_ids(&self.base_dir)? {
             let path = self.base_dir.join(segment_name(seg_id));
-            let file = File::open(&path).with_context(|| format!("replay open {}", path.display()))?;
+            let file =
+                File::open(&path).with_context(|| format!("replay open {}", path.display()))?;
             for line in BufReader::new(file).lines() {
                 let line = line.context("replay read line")?;
                 if line.trim().is_empty() {

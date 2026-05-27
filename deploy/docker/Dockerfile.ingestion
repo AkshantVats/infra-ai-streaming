@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY ingestion ./ingestion
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ENV GIT_SHA=${GIT_SHA} BUILD_TIME=${BUILD_TIME}
 RUN cargo build --release -p ingestion --bin ingestion
 
 FROM debian:bookworm-slim

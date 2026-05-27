@@ -77,10 +77,7 @@ impl TenantLimitsConfig {
 
     /// Resolve limits for a tenant, falling back to the default.
     pub fn resolve(&self, tenant_id: &str) -> TenantLimit {
-        self.tenants
-            .get(tenant_id)
-            .copied()
-            .unwrap_or(self.default)
+        self.tenants.get(tenant_id).copied().unwrap_or(self.default)
     }
 
     pub fn default_limit(&self) -> TenantLimit {

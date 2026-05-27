@@ -19,6 +19,11 @@
 .env
 .env.*
 !.env.example
+credentials.json
+**/credentials.json
+*.pem
+*.key
+secrets/
 
 # IDE and editors
 .idea/

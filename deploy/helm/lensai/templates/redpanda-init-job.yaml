@@ -24,6 +24,8 @@ spec:
               value: {{ .Values.kafka.topic | quote }}
             - name: KAFKA_DLQ_TOPIC
               value: {{ .Values.kafka.dlqTopic | quote }}
+            - name: KAFKA_ANOMALIES_TOPIC
+              value: {{ .Values.kafka.anomaliesTopic | quote }}
             - name: KAFKA_TOPIC_PARTITIONS
               value: {{ .Values.redpanda.topicPartitions | quote }}
           command: ["/bin/sh", "/init-topics.sh"]

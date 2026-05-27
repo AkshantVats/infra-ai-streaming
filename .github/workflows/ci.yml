@@ -5,9 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
-  ingestion:
+  rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,18 +24,85 @@ jobs:
         with:
           # idna/icu transitive deps require 1.86+ as of 2026 resolver output
           toolchain: "1.86"
+          components: rustfmt, clippy
+
+      - name: Cargo fmt (check)
+        run: cargo fmt --check
+
+      - name: Cargo clippy (deny warnings)
+        run: cargo clippy -p ingestion -- -D warnings
 
       - name: Cargo test (ingestion)
         run: cargo test -p ingestion --verbose
 
-  consumer:
+  go:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version-file: consumer/go.mod
+          cache-dependency-path: consumer/go.sum
+
+      - name: gofmt (check)
+        run: |
+          cd consumer
+          test -z "$(gofmt -l .)"
 
       - name: Go test (consumer)
         run: cd consumer && go test ./...
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.0
+
+      - name: Helm dependency update
+        run: helm dependency update deploy/helm/lensai
+
+      - name: Helm template (values-m1.yaml)
+        run: helm template lensai deploy/helm/lensai -n lensai -f deploy/helm/lensai/values-m1.yaml >/dev/null
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: shellcheck
+        run: |
+          shellcheck -x \
+            chaos/*.sh \
+            deploy/k3d/*.sh \
+            deploy/helm/lensai/files/*.sh \
+            deploy/redpanda/*.sh \
+            scripts/*.sh
+
+      - name: bash -n (syntax)
+        run: |
+          bash -n chaos/*.sh
+          bash -n deploy/k3d/*.sh
+          bash -n deploy/helm/lensai/files/*.sh
+          bash -n deploy/redpanda/*.sh
+          bash -n scripts/*.sh
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

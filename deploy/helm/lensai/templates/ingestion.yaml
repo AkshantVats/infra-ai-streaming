@@ -8,6 +8,10 @@ metadata:
     app.kubernetes.io/component: ingestion
 spec:
   replicas: {{ .Values.ingestion.replicas }}
+  {{- if and .Values.ingestion.wal.persistence.enabled (eq (int .Values.ingestion.replicas) 1) }}
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "lensai.selectorLabels" . | nindent 6 }}
@@ -60,7 +64,12 @@ spec:
               readOnly: true
       volumes:
         - name: wal
+          {{- if .Values.ingestion.wal.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "lensai.fullname" . }}-ingestion-wal
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         - name: tenant-limits
           configMap:
             name: {{ include "lensai.fullname" . }}-tenant-limits

@@ -85,10 +85,8 @@ impl Config {
             &env_var("BATCH_CHANNEL_CAPACITY", "10000")?,
         )?;
         let max_batch_size = parse_usize("MAX_BATCH_SIZE", &env_var("MAX_BATCH_SIZE", "1000")?)?;
-        let max_event_age_ms = parse_u64(
-            "MAX_EVENT_AGE_MS",
-            &env_var("MAX_EVENT_AGE_MS", "3600000")?,
-        )?;
+        let max_event_age_ms =
+            parse_u64("MAX_EVENT_AGE_MS", &env_var("MAX_EVENT_AGE_MS", "3600000")?)?;
         let max_concurrent_requests = parse_usize(
             "MAX_CONCURRENT_REQUESTS",
             &env_var("MAX_CONCURRENT_REQUESTS", "1000")?,
