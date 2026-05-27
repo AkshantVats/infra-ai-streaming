@@ -110,7 +110,7 @@ run_step_or_abort() {
   fi
 }
 
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329,SC2317
 require_cmd() {
   local c="$1"
   command -v "$c" >/dev/null 2>&1 || { echo "Missing required command: $c" >&2; return 1; }

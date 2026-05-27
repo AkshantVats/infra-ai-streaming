@@ -23,8 +23,12 @@ fi
 PF_ING="${PF_ING_PID:-}"
 PF_CON="${PF_CON_PID:-}"
 cleanup() {
-  [[ -n "$PF_ING" ]] && kill "$PF_ING" 2>/dev/null || true
-  [[ -n "$PF_CON" ]] && kill "$PF_CON" 2>/dev/null || true
+  if [[ -n "$PF_ING" ]]; then
+    kill "$PF_ING" 2>/dev/null || true
+  fi
+  if [[ -n "$PF_CON" ]]; then
+    kill "$PF_CON" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 

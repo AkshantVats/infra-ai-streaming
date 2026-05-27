@@ -195,7 +195,7 @@ wait_ch_tenant_growth() {
   local i=0 target=$((baseline + min_new))
   while (( i < timeout )); do
     local now
-    now="$(count_events_in_ch | tr -cd '0-9')"
+    now="$(count_events_in_ch "$TENANT" | tr -cd '0-9')"
     now="${now:-0}"
     if (( now >= target )); then
       echo "$now"
@@ -204,7 +204,7 @@ wait_ch_tenant_growth() {
     sleep 3
     i=$((i + 3))
   done
-  count_events_in_ch | tr -cd '0-9'
+  count_events_in_ch "$TENANT" | tr -cd '0-9'
   return 1
 }
 
@@ -356,7 +356,7 @@ scenario_kill_redpanda() {
   wait_pids "${pids[@]}"
   sleep 3
   local ch_before
-  ch_before="$(count_events_in_ch | tr -cd '0-9')"
+  ch_before="$(count_events_in_ch "$TENANT" | tr -cd '0-9')"
   ch_before="${ch_before:-0}"
   log "ClickHouse rows before kill: ${ch_before}"
 
@@ -427,7 +427,7 @@ scenario_kill_redpanda() {
   [[ "$min_expected" -ge 50 ]] || min_expected=50
   while (( i < WAL_DRAIN_WAIT_SEC )); do
     wal_pending_now="$(metric_val "$METRICS_INGEST" 'wal_segments_pending')"
-    ch_now="$(count_events_in_ch | tr -cd '0-9')"
+    ch_now="$(count_events_in_ch "$TENANT" | tr -cd '0-9')"
     ch_now="${ch_now:-0}"
     if [[ "${wal_pending_now:-1}" == "0" ]] && (( ch_now >= ch_before + min_expected )); then
       pass "WAL drained and ClickHouse caught up (${ch_before} → ${ch_now})"
@@ -459,7 +459,7 @@ scenario_kill_redpanda() {
   if ch_after="$(wait_ch_tenant_growth "$ch_before" "$min_expected" "$CH_RECOVERY_WAIT_SEC")"; then
     pass "ClickHouse grew: ${ch_before} → ${ch_after} (sent ~${total_sent} during scenario)"
   else
-    ch_after="${ch_after:-$(count_events_in_ch | tr -cd '0-9')}"
+    ch_after="${ch_after:-$(count_events_in_ch "$TENANT" | tr -cd '0-9')}"
     fail "ClickHouse did not grow enough (before=${ch_before}, after=${ch_after}, need +${min_expected})"
     ingestion_logs
     consumer_logs
@@ -481,7 +481,7 @@ scenario_throttle_clickhouse() {
   local cb_before overflow_before ch_before
   cb_before="$(metric_val "$METRICS_CONSUMER" 'circuit_breaker_state\{state="open"\}')"
   overflow_before="$(metric_val "$METRICS_CONSUMER" 'redis_overflow_depth')"
-  ch_before="$(count_events_in_ch | tr -cd '0-9')"
+  ch_before="$(count_events_in_ch "$TENANT" | tr -cd '0-9')"
   log "Baseline — breaker_open: ${cb_before:-0}, overflow: ${overflow_before:-0}, CH: ${ch_before}"
 
   local sts
@@ -540,7 +540,7 @@ scenario_throttle_clickhouse() {
   local cb_after overflow_after ch_after
   cb_after="$(metric_val "$METRICS_CONSUMER" 'circuit_breaker_state\{state="open"\}')"
   overflow_after="$(metric_val "$METRICS_CONSUMER" 'redis_overflow_depth')"
-  ch_after="$(count_events_in_ch | tr -cd '0-9')"
+  ch_after="$(count_events_in_ch "$TENANT" | tr -cd '0-9')"
 
   echo "  breaker max: ${cb_max}, overflow max: ${overflow_max}, ch_errors Δ: ${ch_errors_delta}, lag peak: ${lag_peak}"
   echo "  breaker after: ${cb_after:-?}, overflow after: ${overflow_after:-?}"
@@ -577,7 +577,7 @@ scenario_load_m1() {
   require_ingest
 
   local ch_before ch_after total_sent=0
-  ch_before="$(count_events_in_ch | tr -cd '0-9')"
+  ch_before="$(count_events_in_ch "$TENANT" | tr -cd '0-9')"
   ch_before="${ch_before:-0}"
 
   local events_per_sec=$((LOAD_EVENTS / LOAD_DURATION_SEC))
@@ -605,7 +605,7 @@ scenario_load_m1() {
   done
 
   sleep 12
-  ch_after="$(count_events_in_ch | tr -cd '0-9')"
+  ch_after="$(count_events_in_ch "$TENANT" | tr -cd '0-9')"
   ch_after="${ch_after:-0}"
   local ch_new=$((ch_after - ch_before))
   local lag overflow
