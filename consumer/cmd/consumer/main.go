@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/anomaly"
+	"github.com/akshantvats/infra-ai-streaming/consumer/internal/buildinfo"
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/clickhouse"
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/config"
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/kafka"
@@ -17,6 +18,12 @@ import (
 
 func main() {
 	cfg := config.LoadFromEnv()
+	log.Printf(
+		"level=info msg=consumer_starting version=%s git_sha=%s build_time=%s",
+		buildinfo.Version,
+		buildinfo.GitSHA,
+		buildinfo.BuildTime,
+	)
 	m := metrics.New()
 	metrics.StartServer(cfg.MetricsPort)
 

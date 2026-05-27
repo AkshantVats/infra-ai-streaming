@@ -1,5 +1,6 @@
 //! Rust ingestion engine: config, metrics, WAL, rate limiting, and Kafka produce.
 
+pub mod build_info;
 pub mod config;
 pub mod handlers;
 pub mod kafka;

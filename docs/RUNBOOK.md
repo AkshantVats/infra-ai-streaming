@@ -7,6 +7,7 @@ This document is intentionally **procedural**: symptoms → checks → actions. 
 - `docs/ARCHITECTURE.md` (evergreen summary)
 - `docs/ARCHITECTURE-AND-FLOWS.md` (full walkthrough + troubleshooting matrix)
 - `docs/E2E-CHECKLIST.md` and `docs/E2E-PROOF-K3D.md`
+- `docs/DATA-RETENTION.md` — ClickHouse TTL, WAL PVC, Kafka retention
 
 ---
 

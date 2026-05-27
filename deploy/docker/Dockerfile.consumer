@@ -7,7 +7,14 @@ WORKDIR /build/consumer
 COPY consumer/go.mod consumer/go.sum ./
 RUN go mod download
 COPY consumer/ ./
-RUN CGO_ENABLED=0 go build -o /consumer ./cmd/consumer
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ARG VERSION=0.1.0-dev
+RUN CGO_ENABLED=0 go build -ldflags "\
+  -X github.com/akshantvats/infra-ai-streaming/consumer/internal/buildinfo.Version=${VERSION} \
+  -X github.com/akshantvats/infra-ai-streaming/consumer/internal/buildinfo.GitSHA=${GIT_SHA} \
+  -X github.com/akshantvats/infra-ai-streaming/consumer/internal/buildinfo.BuildTime=${BUILD_TIME}" \
+  -o /consumer ./cmd/consumer
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /

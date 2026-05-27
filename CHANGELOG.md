@@ -6,14 +6,15 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
-- Go consumer Kafka reader skeleton (stdout logging, JSON batch deserialize).
-- Local Docker stack: Redis, Redpanda, ClickHouse, Prometheus, Grafana provisioning.
-- Grafana dashboard **AI Inference Observability — Local E2E** (`deploy/grafana/provisioning/dashboards/ai-inference-e2e.json`).
-- E2E smoke script and README quickstart for HTTP → Kafka → consumer stdout.
+- Build metadata (`version`, `git_sha`, `build_time`) on ingestion and consumer `/health` and startup logs.
+- `docs/SLOs.md`, `docs/DATA-RETENTION.md`, `docs/SECURITY-HARDENING.md`.
+- Weekly / dispatch k3d E2E workflow (`.github/workflows/e2e-k3d-dispatch.yml`).
+- Expanded `CONTRIBUTING.md` with local CI matrix and M1 E2E one-liner.
 
 ### Changed
 
-- CI runs `go test ./...` in `consumer/` alongside Rust ingestion tests.
+- `docs/PRODUCTION-READINESS-CHECKLIST.md` and `docs/PROJECT-STATUS.md` updated for prod-hardening layers.
+- `RELEASE.md` documents build metadata and Docker build-args.
 
 ## [0.1.0-dev] — 2026-05-16
 

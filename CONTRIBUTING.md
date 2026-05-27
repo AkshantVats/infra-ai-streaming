@@ -3,35 +3,59 @@
 ## Clone and toolchain
 
 ```bash
-git clone https://github.com/YOURUSERNAME/infra-ai-streaming.git
+git clone https://github.com/AkshantVats/infra-ai-streaming.git
 cd infra-ai-streaming
 ```
 
-Install **Rust 1.86+** via [rustup](https://rustup.rs). The workspace reads [`rust-toolchain.toml`](rust-toolchain.toml); running `cargo` here selects the right toolchain.
+Install **Rust 1.86+** via [rustup](https://rustup.rs). The workspace reads [`rust-toolchain.toml`](rust-toolchain.toml).
 
-Install **Go 1.22+** for the consumer (`consumer/go.mod`). On macOS, install **cmake** (required for `rdkafka-sys`). See [docs/dev-macos.md](docs/dev-macos.md) for Xcode CLT, Homebrew, and optional Redis.
+Install **Go 1.22+** for the consumer (`consumer/go.mod`). On macOS, install **cmake** (required for `rdkafka-sys`). See [docs/dev-macos.md](docs/dev-macos.md).
 
-## Tests
+## Local CI matrix (matches GitHub Actions)
+
+Run before opening a PR:
+
+```bash
+cargo fmt --check
+cargo clippy -p ingestion -- -D warnings
+cargo test -p ingestion
+(cd consumer && test -z "$(gofmt -l .)" && go test ./...)
+helm dependency update deploy/helm/lensai
+helm template lensai deploy/helm/lensai -n lensai -f deploy/helm/lensai/values-m1.yaml >/dev/null
+shellcheck -x chaos/*.sh deploy/k3d/*.sh deploy/helm/lensai/files/*.sh deploy/redpanda/*.sh scripts/*.sh
+```
+
+PR CI (`.github/workflows/ci.yml`) runs the same gates on every push to `main` and on pull requests. It does **not** run the full k3d E2E (too heavy for every PR).
+
+## Full M1 E2E (k3d) one-liner
+
+Requires Docker, k3d, helm, kubectl:
+
+```bash
+HELM_WAIT_TIMEOUT=2m ./scripts/e2e-k3d-full.sh
+```
+
+Optional: weekly / manual full E2E in GitHub Actions — [`.github/workflows/e2e-k3d-dispatch.yml`](.github/workflows/e2e-k3d-dispatch.yml).
+
+## Tests without Kubernetes
 
 ```bash
 cargo test -p ingestion
 go test ./consumer/...
 ```
 
-Rust tests are **library** tests (config, WAL, rate limit, metrics). Go tests cover batch JSON deserialize. Neither requires Docker unless you run the full E2E path.
+Rust tests cover config, WAL, rate limit, metrics. Go tests cover JSON, breaker, row mapping. Neither requires Docker unless you run compose E2E.
 
 ## Local dependencies (optional)
-
-Compose reads `deploy/.env` via `env_file` (paths are relative to `deploy/`), so copy the example file first; it is gitignored after creation.
 
 ```bash
 cp deploy/.env.example deploy/.env
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 ```
 
-See README **Local dependencies (Docker)** for ports and caveats.
+See README **Local dependencies (Docker)** for ports.
 
-**Consumer (optional E2E):**
+**Consumer (compose E2E):**
 
 ```bash
 set -a && source deploy/.env && set +a
@@ -39,10 +63,16 @@ export KAFKA_BROKERS=127.0.0.1:9092
 go run ./consumer/cmd/consumer
 ```
 
-Or run [`scripts/smoke-e2e.sh`](scripts/smoke-e2e.sh) after Compose is up.
+Or [`scripts/smoke-e2e.sh`](scripts/smoke-e2e.sh) after Compose is up.
+
+## Build metadata
+
+`/health` on ingestion (`:8080`) and consumer (`:9091`) returns `version`, `git_sha`, and `build_time`. Docker builds accept `GIT_SHA` and `BUILD_TIME` build-args (see [RELEASE.md](RELEASE.md)).
 
 ## Pull requests
 
-- Keep changes focused and consistent with existing style (imports, error handling, docs level).
-- Ensure `cargo test -p ingestion` and `go test ./consumer/...` pass locally.
-- Do not commit secrets, `.env`, or large generated artifacts. Follow `.gitignore`.
+- Keep changes focused; match existing style (imports, error handling, docs level).
+- Ensure the **local CI matrix** above passes.
+- Do not commit secrets, `.env`, or large generated artifacts (see `.gitignore`).
+- Update [CHANGELOG.md](CHANGELOG.md) under `[Unreleased]` for user-visible changes.
+- Link operational doc updates when touching deploy or observability (SLOs, runbook, retention).

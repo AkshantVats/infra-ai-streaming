@@ -42,3 +42,29 @@ If you publish container images, tag them with both the SemVer and the git SHA:
 - `lensai/consumer:vX.Y.Z` and `lensai/consumer:<git-sha>`
 
 Keep `values-m1.yaml` using `pullPolicy: Never` for local k3d; production clusters should use immutable tags.
+
+### Build metadata (git SHA + build time)
+
+Ingestion and consumer embed compile-time metadata for support and rollouts:
+
+| Surface | Fields |
+|---------|--------|
+| `GET /health` (ingestion `:8080`, consumer `:9091`) | `version`, `git_sha`, `build_time` (JSON) |
+| Startup logs | Same fields in structured log line |
+
+**Docker builds** (from repo root):
+
+```bash
+export GIT_SHA="$(git rev-parse --short HEAD)"
+export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+docker build --build-arg GIT_SHA="$GIT_SHA" --build-arg BUILD_TIME="$BUILD_TIME" \
+  -f deploy/docker/Dockerfile.ingestion -t lensai/ingestion:local .
+docker build --build-arg GIT_SHA="$GIT_SHA" --build-arg BUILD_TIME="$BUILD_TIME" \
+  -f deploy/docker/Dockerfile.consumer -t lensai/consumer:local .
+```
+
+`./deploy/k3d/up.sh` passes these args automatically when building local images.
+
+**Rust (non-Docker):** `ingestion/build.rs` sets `GIT_SHA` / `BUILD_TIME` from env or `git rev-parse` + wall clock.
+
+**Go (non-Docker):** optional `-ldflags` (see `consumer/internal/buildinfo`); defaults are `dev` / `unknown` for `go run`.

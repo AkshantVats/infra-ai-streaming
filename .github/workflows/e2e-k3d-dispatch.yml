@@ -1,0 +1,63 @@
+# Full k3d + Helm M1 E2E — manual dispatch and weekly schedule (not on every PR).
+name: E2E k3d (dispatch)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly Sunday 06:00 UTC — avoids daily cost/flake on shared runners
+    - cron: "0 6 * * 0"
+
+concurrency:
+  group: e2e-k3d-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-k3d:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies (Rust / rdkafka preflight)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libssl-dev libsasl2-dev libzstd-dev libcurl4-openssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.86"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: consumer/go.mod
+          cache-dependency-path: consumer/go.sum
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.0
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          k3d version
+
+      - name: Build metadata for images
+        run: |
+          echo "GIT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Full M1 E2E (k3d + Helm)
+        env:
+          GIT_SHA: ${{ env.GIT_SHA }}
+          BUILD_TIME: ${{ env.BUILD_TIME }}
+          HELM_WAIT_TIMEOUT: 5m
+          POD_WAIT_TIMEOUT: 300s
+        run: timeout 30m ./scripts/e2e-k3d-full.sh
+
+      - name: Upload E2E proof snippet on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-k3d-proof-tail
+          path: docs/E2E-PROOF-K3D.md
+          retention-days: 14

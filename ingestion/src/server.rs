@@ -13,9 +13,22 @@ use tower::limit::ConcurrencyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::build_info;
 use crate::config::Config;
 use crate::handlers::{handle_ingest, AppState};
 use crate::metrics::gather_metrics;
+
+async fn health_handler() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "ok",
+            "version": build_info::VERSION,
+            "git_sha": build_info::GIT_SHA,
+            "build_time": build_info::BUILD_TIME,
+        })),
+    )
+}
 
 /// Build the ingestion HTTP router with concurrency, timeout, and tracing layers.
 pub fn build_router(state: AppState) -> Router {
@@ -23,15 +36,15 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/ingest", post(handle_ingest))
-        .route(
-            "/health",
-            get(|| async { (StatusCode::OK, Json(json!({"status": "ok"}))) }),
-        )
+        .route("/health", get(health_handler))
         .route(
             "/metrics",
             get(|| async {
                 match gather_metrics() {
-                    Ok(body) => ([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], body),
+                    Ok(body) => (
+                        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+                        body,
+                    ),
                     Err(e) => {
                         tracing::error!(error = %e, "gather metrics failed");
                         (
@@ -151,5 +164,12 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(json["status"], "ok");
+        assert!(json["git_sha"].is_string());
+        assert!(json["build_time"].is_string());
     }
 }
