@@ -6,6 +6,7 @@ redis:
   enabled: true
   image: redis:7-alpine
   replicas: 1
+  probes: {}
   resources:
     requests:
       cpu: 50m

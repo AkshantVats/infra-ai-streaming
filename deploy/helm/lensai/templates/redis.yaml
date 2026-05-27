@@ -27,13 +27,11 @@ spec:
           livenessProbe:
             exec:
               command: ["redis-cli", "ping"]
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            {{- include "lensai.execProbeTiming" (list (dig "probes" "liveness" dict .Values.redis) (dict "initialDelaySeconds" 5 "periodSeconds" 10 "timeoutSeconds" 5 "failureThreshold" 3)) | nindent 12 }}
           readinessProbe:
             exec:
               command: ["redis-cli", "ping"]
-            initialDelaySeconds: 3
-            periodSeconds: 5
+            {{- include "lensai.execProbeTiming" (list (dig "probes" "readiness" dict .Values.redis) (dict "initialDelaySeconds" 3 "periodSeconds" 5 "timeoutSeconds" 5 "failureThreshold" 3)) | nindent 12 }}
           resources:
             {{- toYaml .Values.redis.resources | nindent 12 }}
 ---
