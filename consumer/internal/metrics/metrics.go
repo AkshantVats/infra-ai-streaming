@@ -7,16 +7,17 @@ import (
 
 // M holds consumer Prometheus metrics (minimal Day 5 set).
 type M struct {
-	KafkaRecordsProcessed prometheus.Counter
-	ClickHouseWriteErrors prometheus.Counter
-	ClickHouseBatchSize   prometheus.Histogram
-	ClickHouseFlushDur    prometheus.Histogram
-	CircuitBreakerState   *prometheus.GaugeVec
-	RedisOverflowDepth    prometheus.Gauge
-	DLQEvents             prometheus.Counter
-	KafkaConsumerLagEvents        *prometheus.GaugeVec
-	KafkaDeserializationErrors    prometheus.Counter
-	KafkaRecordHandoffErrors      prometheus.Counter
+	KafkaRecordsProcessed      prometheus.Counter
+	ClickHouseWriteErrors      prometheus.Counter
+	ClickHouseBatchSize        prometheus.Histogram
+	ClickHouseFlushDur         prometheus.Histogram
+	CircuitBreakerState        *prometheus.GaugeVec
+	RedisOverflowDepth         prometheus.Gauge
+	DLQEvents                  prometheus.Counter
+	KafkaConsumerLagEvents     *prometheus.GaugeVec
+	KafkaDeserializationErrors prometheus.Counter
+	KafkaRecordHandoffErrors   prometheus.Counter
+	AnomaliesDetectedTotal     prometheus.Counter
 }
 
 // New registers metrics with the default registry.
@@ -63,6 +64,10 @@ func New() *M {
 		KafkaRecordHandoffErrors: promauto.NewCounter(prometheus.CounterOpts{
 			Name: "kafka_record_handoff_errors_total",
 			Help: "Kafka records where sink.Accept failed (offset not committed).",
+		}),
+		AnomaliesDetectedTotal: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "anomalies_detected_total",
+			Help: "Inference latency anomalies detected via z-score and published to ai_anomalies.",
 		}),
 	}
 }

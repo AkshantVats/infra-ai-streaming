@@ -13,14 +13,18 @@ This document states what exists in the repository today versus what is still de
 - **WAL + Kafka produce path**: Handler appends to a segment WAL (`WAL_DIR`, default `/tmp/wal`) before enqueue; a background task drives an **rdkafka** producer to `KAFKA_TOPIC` with DLQ on persistent failure; WAL entries are **mark_acked** after broker delivery. Startup **replays unacked** WAL entries into the channel.
 - **Redis rate limiting**: Per-tenant token bucket on ingest (fail-open when Redis is unavailable, per design).
 - **Go consumer** (`consumer/`): franz-go reader → ClickHouse **BatchWriter** (1000 events / 500ms), **circuit breaker**, **Redis overflow**, **DLQ** (`ai_inference_dlq`), Prometheus on **`:9091`**. Unit tests for JSON, breaker, row mapping.
+- **Day 12 G-09**: z-score inference latency anomaly detection in the Go consumer, publishing to **`ai_anomalies`** and exposing **`anomalies_detected_total`** with a Grafana alert rule.
 - **OBSERVABILITY.md**: Metrics catalog, SLO sketches, ClickHouse verification queries.
 - **docs/ARCHITECTURE-AND-FLOWS.md**: Architecture, G-01..G-07 status, code walkthrough, lifecycle paths, dual-dashboard observability matrix, troubleshooting.
 - **Local dependency stack**: Docker Compose runs **Redis**, **Redpanda**, **ClickHouse**, **Prometheus**, **Grafana**, plus one-shot **redpanda-init** (topics) and **clickhouse-init** (DDL). See [deploy/README.md](../deploy/README.md) for ports.
 - **Helm / k3d (G-07):** Umbrella chart `deploy/helm/lensai/`, Dockerfiles, k3d config, consumer HPA on `kafka_consumer_lag_sum` via prometheus-adapter. Three-command path in [deploy/README.md](../deploy/README.md).
 
+## OSS contributions (Day 11 — OSS-01)
+
+- **Vector** [#25455](https://github.com/vectordotdev/vector/issues/25455) — memory enrichment counter `_total` suffix fix: [PR #25496](https://github.com/vectordotdev/vector/pull/25496) (open).
+
 ## Not production-complete yet (gaps)
 
-- **Anomaly detection** and `ai_anomalies` topic publishing — backlog.
 - **Integration / load tests in CI**: CI runs **Rust unit tests** only; compose E2E and `go test ./consumer/...` are local (`scripts/smoke-e2e.sh`).
 - **Partition key:** producer keys by `tenant_id` only; DESIGN target `hash(tenant_id:model_id)` not implemented.
 

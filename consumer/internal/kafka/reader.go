@@ -11,6 +11,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 
+	"github.com/akshantvats/infra-ai-streaming/consumer/internal/anomaly"
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/config"
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/metrics"
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/model"
@@ -28,10 +29,13 @@ type Reader struct {
 	groupID string
 	sink    EventSink
 	m       *metrics.M
+
+	detector         *anomaly.ZScoreLatencyDetector
+	anomalyPublisher *AnomalyPublisher
 }
 
 // NewReader builds a franz-go consumer for the configured topic and group.
-func NewReader(cfg config.Config, sink EventSink, m *metrics.M) (*Reader, error) {
+func NewReader(cfg config.Config, sink EventSink, m *metrics.M, detector *anomaly.ZScoreLatencyDetector, anomalyPublisher *AnomalyPublisher) (*Reader, error) {
 	brokers := strings.Split(cfg.KafkaBrokers, ",")
 	for i := range brokers {
 		brokers[i] = strings.TrimSpace(brokers[i])
@@ -49,11 +53,14 @@ func NewReader(cfg config.Config, sink EventSink, m *metrics.M) (*Reader, error)
 	}
 
 	return &Reader{
-		client:  cl,
-		topic:   cfg.KafkaTopic,
-		groupID: cfg.KafkaGroupID,
-		sink:    sink,
-		m:       m,
+		client:   cl,
+		topic:    cfg.KafkaTopic,
+		groupID:  cfg.KafkaGroupID,
+		sink:     sink,
+		m:        m,
+		detector: detector,
+		// anomalyPublisher may be nil (e.g. tests / disabled feature)
+		anomalyPublisher: anomalyPublisher,
 	}, nil
 }
 
@@ -149,6 +156,20 @@ func (r *Reader) handleRecord(ctx context.Context, rec *kgo.Record) error {
 	if err != nil {
 		return err
 	}
+
+	// Detect and publish inference latency anomalies before handing off the batch.
+	if r.detector != nil && r.anomalyPublisher != nil {
+		var detected []*anomaly.DetectedAnomaly
+		for i := range batch.Events {
+			if a := r.detector.ObserveEvent(batch.Events[i]); a != nil {
+				detected = append(detected, a)
+			}
+		}
+		if err := r.anomalyPublisher.Publish(ctx, detected); err != nil {
+			return err
+		}
+	}
+
 	if err := r.sink.Accept(ctx, batch.Events); err != nil {
 		return err
 	}
