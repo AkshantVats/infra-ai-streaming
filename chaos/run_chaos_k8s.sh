@@ -22,6 +22,11 @@ LOAD_EVENTS="${LOAD_EVENTS:-2000}"
 LOAD_DURATION_SEC="${LOAD_DURATION_SEC:-10}"
 REDPANDA_DOWN_SEC="${REDPANDA_DOWN_SEC:-20}"
 CH_PAUSE_SEC="${CH_PAUSE_SEC:-25}"
+# M1/k3d: ClickHouse can take >3 min to become Ready after scale 0→1.
+CH_READY_TIMEOUT_SEC="${CH_READY_TIMEOUT_SEC:-300}"
+CH_SCALE_DOWN_WAIT_SEC="${CH_SCALE_DOWN_WAIT_SEC:-90}"
+REDPANDA_READY_TIMEOUT_SEC="${REDPANDA_READY_TIMEOUT_SEC:-300}"
+REDPANDA_SCALE_DOWN_WAIT_SEC="${REDPANDA_SCALE_DOWN_WAIT_SEC:-90}"
 TENANT="${CHAOS_TENANT:-chaos-k8s}"
 CURL_MAX_TIME="${CURL_MAX_TIME:-15}"
 CURL_OPTS=(--max-time "${CURL_MAX_TIME}" --connect-timeout 5)
@@ -96,8 +101,21 @@ print(json.dumps({'events': events}))
 "
 }
 
+wait_ingest_ready() {
+  local timeout="${1:-30}"
+  local i=0
+  while (( i < timeout )); do
+    if curl -sf "${CURL_OPTS[@]}" "${INGEST_URL}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 start_port_forwards() {
-  if curl -sf "${CURL_OPTS[@]}" "${INGEST_URL}/health" >/dev/null 2>&1; then
+  if wait_ingest_ready 3; then
     log "Ingestion already reachable at ${INGEST_URL}"
     return 0
   fi
@@ -106,8 +124,12 @@ start_port_forwards() {
   PF_ING=$!
   kubectl port-forward -n "${NS}" svc/consumer 9091:9091 >/tmp/pf-con-k8s.log 2>&1 &
   PF_CON=$!
-  sleep 3
+  sleep 2
   disown_port_forwards
+  if ! wait_ingest_ready 45; then
+    fail "port-forward failed; see /tmp/pf-ing-k8s.log and /tmp/pf-con-k8s.log"
+    return 1
+  fi
 }
 
 disown_port_forwards() {
@@ -129,6 +151,19 @@ wait_pids() {
   done
 }
 
+wait_clickhouse_gone() {
+  local timeout="${1:-${CH_SCALE_DOWN_WAIT_SEC}}"
+  local selector="app.kubernetes.io/instance=${RELEASE},app.kubernetes.io/component=clickhouse"
+  log "Waiting for ClickHouse pod termination (${timeout}s)..."
+  if kubectl wait --for=delete pod -l "${selector}" -n "${NS}" --timeout="${timeout}s" >/dev/null 2>&1; then
+    return 0
+  fi
+  # Pod may already be gone
+  local count
+  count="$(kubectl get pods -n "${NS}" -l "${selector}" --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "${count:-0}" == "0" ]]
+}
+
 ensure_clickhouse_up() {
   local sts
   sts="$(sts_name clickhouse)"
@@ -138,19 +173,32 @@ ensure_clickhouse_up() {
   if [[ "${desired:-0}" == "0" ]]; then
     log "Restoring ClickHouse replicas (was scaled to 0)..."
     kubectl scale "statefulset/${sts}" -n "${NS}" --replicas=1
-    wait_clickhouse_ready 120 || true
+    wait_clickhouse_ready "${CH_READY_TIMEOUT_SEC}" || return 1
   fi
+  return 0
 }
 
 require_ingest() {
-  if ! curl -sf "${CURL_OPTS[@]}" "${INGEST_URL}/health" >/dev/null 2>&1; then
-    fail "ingestion not reachable at ${INGEST_URL}/health"
+  if ! wait_ingest_ready 15; then
+    fail "ingestion not reachable at ${INGEST_URL}/health (see /tmp/pf-ing-k8s.log)"
     exit 1
   fi
 }
 
+wait_redpanda_gone() {
+  local timeout="${1:-${REDPANDA_SCALE_DOWN_WAIT_SEC}}"
+  local selector="app.kubernetes.io/instance=${RELEASE},app.kubernetes.io/component=redpanda"
+  log "Waiting for Redpanda pod termination (${timeout}s)..."
+  if kubectl wait --for=delete pod -l "${selector}" -n "${NS}" --timeout="${timeout}s" >/dev/null 2>&1; then
+    return 0
+  fi
+  local count
+  count="$(kubectl get pods -n "${NS}" -l "${selector}" --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "${count:-0}" == "0" ]]
+}
+
 wait_redpanda_ready() {
-  local timeout="${1:-120}"
+  local timeout="${1:-${REDPANDA_READY_TIMEOUT_SEC}}"
   local selector="app.kubernetes.io/instance=${RELEASE},app.kubernetes.io/component=redpanda"
   log "Waiting for redpanda pod ready (${timeout}s)..."
   if kubectl wait --for=condition=ready pod -l "${selector}" -n "${NS}" --timeout="${timeout}s" >/dev/null 2>&1; then
@@ -158,11 +206,13 @@ wait_redpanda_ready() {
     return 0
   fi
   fail "Redpanda not ready after ${timeout}s"
+  kubectl get pods -n "${NS}" -l "${selector}" -o wide 2>&1 || true
+  kubectl describe pod -n "${NS}" -l "${selector}" 2>&1 | tail -40 || true
   return 1
 }
 
 wait_clickhouse_ready() {
-  local timeout="${1:-120}"
+  local timeout="${1:-${CH_READY_TIMEOUT_SEC}}"
   local selector="app.kubernetes.io/instance=${RELEASE},app.kubernetes.io/component=clickhouse"
   log "Waiting for ClickHouse pod ready (${timeout}s)..."
   if kubectl wait --for=condition=ready pod -l "${selector}" -n "${NS}" --timeout="${timeout}s" >/dev/null 2>&1; then
@@ -170,6 +220,8 @@ wait_clickhouse_ready() {
     return 0
   fi
   fail "ClickHouse not ready after ${timeout}s"
+  kubectl get pods -n "${NS}" -l "${selector}" -o wide 2>&1 || true
+  kubectl describe pod -n "${NS}" -l "${selector}" 2>&1 | tail -40 || true
   return 1
 }
 
@@ -198,8 +250,8 @@ scenario_kill_redpanda() {
   echo -e "${BOLD}SCENARIO C1 (k8s): kill-redpanda — broker outage + WAL replay${NC}"
   separator
 
-  ensure_clickhouse_up
-  start_port_forwards
+  ensure_clickhouse_up || exit 1
+  start_port_forwards || exit 1
   trap stop_port_forwards EXIT
   require_ingest
 
@@ -224,7 +276,7 @@ scenario_kill_redpanda() {
   sts="$(sts_name redpanda)"
   log "Phase 2: scale redpanda to 0 (${sts})..."
   kubectl scale "statefulset/${sts}" -n "${NS}" --replicas=0
-  sleep 3
+  wait_redpanda_gone "${REDPANDA_SCALE_DOWN_WAIT_SEC}" || warn "Redpanda pod may still terminating"
 
   log "Phase 3: ingest during broker outage (200 events)..."
   local wal_events=0
@@ -246,7 +298,8 @@ scenario_kill_redpanda() {
   log "Phase 4: broker down ${REDPANDA_DOWN_SEC}s, then restore..."
   sleep "$REDPANDA_DOWN_SEC"
   kubectl scale "statefulset/${sts}" -n "${NS}" --replicas=1
-  wait_redpanda_ready 120
+  sleep 3
+  wait_redpanda_ready "${REDPANDA_READY_TIMEOUT_SEC}"
 
   log "Phase 5: restart ingestion for WAL replay..."
   restart_ingestion_k8s || warn "WAL replay may need manual check"
@@ -266,6 +319,7 @@ scenario_kill_redpanda() {
     pass "Recovery path OK (CH grew or held; at-least-once may duplicate)"
   else
     fail "CH count dropped unexpectedly (before=${ch_before}, after=${ch_after})"
+    exit 1
   fi
   separator
 }
@@ -275,8 +329,8 @@ scenario_throttle_clickhouse() {
   echo -e "${BOLD}SCENARIO C2 (k8s): throttle-clickhouse — breaker + overflow${NC}"
   separator
 
-  ensure_clickhouse_up
-  start_port_forwards
+  ensure_clickhouse_up || exit 1
+  start_port_forwards || exit 1
   trap 'stop_port_forwards; ensure_clickhouse_up' EXIT
   require_ingest
 
@@ -290,7 +344,7 @@ scenario_throttle_clickhouse() {
   sts="$(sts_name clickhouse)"
   log "Phase 1: scale ClickHouse to 0 (${sts}) for ${CH_PAUSE_SEC}s window..."
   kubectl scale "statefulset/${sts}" -n "${NS}" --replicas=0
-  sleep 2
+  wait_clickhouse_gone "${CH_SCALE_DOWN_WAIT_SEC}" || warn "ClickHouse pod may still terminating"
 
   local payload_50
   payload_50="$(make_event_payload 50 "$TENANT")"
@@ -314,10 +368,12 @@ scenario_throttle_clickhouse() {
 
   log "Phase 3: restore ClickHouse..."
   kubectl scale "statefulset/${sts}" -n "${NS}" --replicas=1
-  if ! wait_clickhouse_ready "${CH_READY_TIMEOUT_SEC:-300}"; then
+  sleep 3
+  if ! wait_clickhouse_ready "${CH_READY_TIMEOUT_SEC}"; then
+    ensure_clickhouse_up || true
     exit 1
   fi
-  sleep 25
+  sleep 15
 
   local cb_after overflow_after ch_after
   cb_after="$(metric_val "$METRICS_CONSUMER" 'circuit_breaker_state\{state="open"\}')"
@@ -412,6 +468,7 @@ Scenarios:
 Environment:
   K8S_NAMESPACE, HELM_RELEASE, INGEST_URL, METRICS_CONSUMER
   LOAD_EVENTS, LOAD_DURATION_SEC, REDPANDA_DOWN_SEC, CH_PAUSE_SEC
+  CH_READY_TIMEOUT_SEC (default: 300), CH_SCALE_DOWN_WAIT_SEC (default: 90)
 EOF
 }
 
