@@ -360,7 +360,7 @@ scenario_kill_redpanda() {
   ch_before="${ch_before:-0}"
   log "ClickHouse rows before kill: ${ch_before}"
 
-  local sts rp_pod
+  local sts
   sts="$(sts_name redpanda)"
   log "Phase 2: scale redpanda to 0 (${sts})..."
   kubectl scale "statefulset/${sts}" -n "${NS}" --replicas=0
@@ -484,7 +484,7 @@ scenario_throttle_clickhouse() {
   ch_before="$(count_events_in_ch | tr -cd '0-9')"
   log "Baseline — breaker_open: ${cb_before:-0}, overflow: ${overflow_before:-0}, CH: ${ch_before}"
 
-  local sts ch_sts
+  local sts
   sts="$(sts_name clickhouse)"
   log "Phase 1: scale ClickHouse to 0 (${sts}) for ${CH_PAUSE_SEC}s window..."
   kubectl scale "statefulset/${sts}" -n "${NS}" --replicas=0
