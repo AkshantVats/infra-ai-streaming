@@ -316,13 +316,16 @@ fi
 } >"$PROOF_TMP"
 
 main_ec=0
-phase_a || main_ec=1
+if ! phase_a; then main_ec=1; fi
 if [[ "$main_ec" -eq 0 ]] || [[ "$CONTINUE_ON_FAIL" == "1" ]]; then
-  phase_b || main_ec=1
+  if ! phase_b; then main_ec=1; fi
 fi
 if [[ "$main_ec" -eq 0 ]] || [[ "$CONTINUE_ON_FAIL" == "1" ]]; then
-  phase_c || main_ec=1
+  if ! phase_c; then main_ec=1; fi
 fi
+for st in "${STEP_STATUS[@]}"; do
+  [[ "$st" == "RED" ]] && main_ec=1 && break
+done
 
 proof_append
 print_summary

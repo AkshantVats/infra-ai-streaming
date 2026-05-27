@@ -314,7 +314,9 @@ scenario_throttle_clickhouse() {
 
   log "Phase 3: restore ClickHouse..."
   kubectl scale "statefulset/${sts}" -n "${NS}" --replicas=1
-  wait_clickhouse_ready 180
+  if ! wait_clickhouse_ready "${CH_READY_TIMEOUT_SEC:-300}"; then
+    exit 1
+  fi
   sleep 25
 
   local cb_after overflow_after ch_after

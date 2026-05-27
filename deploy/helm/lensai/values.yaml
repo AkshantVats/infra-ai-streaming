@@ -126,6 +126,7 @@ prometheus-adapter:
 kafka:
   topic: ai_inference_events
   dlqTopic: ai_inference_dlq
+  anomaliesTopic: ai_anomalies
   brokers: redpanda:9092
 
 redisUrl: redis://redis:6379
