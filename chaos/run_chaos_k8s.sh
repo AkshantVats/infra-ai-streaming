@@ -140,13 +140,21 @@ start_port_forwards() {
 
 disown_port_forwards() {
   # Bare `wait` would block on port-forward jobs; disown them so only curl PIDs are waited on.
-  [[ -n "$PF_ING" ]] && disown "$PF_ING" 2>/dev/null || true
-  [[ -n "$PF_CON" ]] && disown "$PF_CON" 2>/dev/null || true
+  if [[ -n "$PF_ING" ]]; then
+    disown "$PF_ING" 2>/dev/null || true
+  fi
+  if [[ -n "$PF_CON" ]]; then
+    disown "$PF_CON" 2>/dev/null || true
+  fi
 }
 
 stop_port_forwards() {
-  [[ -n "$PF_ING" ]] && kill "$PF_ING" 2>/dev/null || true
-  [[ -n "$PF_CON" ]] && kill "$PF_CON" 2>/dev/null || true
+  if [[ -n "$PF_ING" ]]; then
+    kill "$PF_ING" 2>/dev/null || true
+  fi
+  if [[ -n "$PF_CON" ]]; then
+    kill "$PF_CON" 2>/dev/null || true
+  fi
   PF_ING="" PF_CON=""
 }
 
