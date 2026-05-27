@@ -3,6 +3,5 @@
 pub mod ingest;
 
 pub use ingest::{
-    handle_ingest, tenant_from_events_json, AppState, InferenceEvent, IngestRequest,
-    IngestResponse,
+    handle_ingest, tenant_from_events_json, AppState, InferenceEvent, IngestRequest, IngestResponse,
 };
