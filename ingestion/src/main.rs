@@ -14,9 +14,7 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = Arc::new(
-        Config::from_env().context("failed to load config from environment")?,
-    );
+    let config = Arc::new(Config::from_env().context("failed to load config from environment")?);
 
     init_tracing();
 
@@ -55,7 +53,9 @@ async fn main() -> anyhow::Result<()> {
                     break;
                 }
             }
-            Err(e) => tracing::warn!(error = %e, "skipping WAL replay entry (cannot build ProduceMessage)"),
+            Err(e) => {
+                tracing::warn!(error = %e, "skipping WAL replay entry (cannot build ProduceMessage)")
+            }
         }
     }
 
@@ -89,9 +89,8 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let rate_limiter = Arc::new(
-        RateLimiter::new(&config.redis_url, tenant_limits).context("init rate limiter")?,
-    );
+    let rate_limiter =
+        Arc::new(RateLimiter::new(&config.redis_url, tenant_limits).context("init rate limiter")?);
 
     let state = AppState {
         config: Arc::clone(&config),

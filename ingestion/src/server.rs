@@ -41,10 +41,7 @@ pub fn build_router(state: AppState) -> Router {
             "/metrics",
             get(|| async {
                 match gather_metrics() {
-                    Ok(body) => (
-                        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-                        body,
-                    ),
+                    Ok(body) => ([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], body),
                     Err(e) => {
                         tracing::error!(error = %e, "gather metrics failed");
                         (
