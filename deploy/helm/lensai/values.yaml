@@ -50,6 +50,11 @@ ingestion:
   replicas: 2
   httpPort: 8080
   walDir: /data/wal
+  wal:
+    persistence:
+      enabled: false
+      size: 1Gi
+      storageClassName: ""
   tenantLimitsPath: /config/tenant-limits.json
   resources:
     requests:

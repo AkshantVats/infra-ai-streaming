@@ -7,6 +7,10 @@ ingestion:
   image:
     pullPolicy: Never
   replicas: 1
+  wal:
+    persistence:
+      enabled: true
+      size: 1Gi
   resources:
     requests:
       cpu: 100m
