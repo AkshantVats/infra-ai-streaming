@@ -117,7 +117,7 @@ cmd_circuit_breaker() {
   echo "Stopping ClickHouse container..."
   "${COMPOSE[@]}" stop clickhouse
   sleep 2
-  for i in $(seq 1 8); do
+  for _ in $(seq 1 8); do
     post_ingest >/dev/null || true
     sleep 0.3
   done
@@ -143,7 +143,7 @@ cmd_dlq_path() {
   echo "Stopping ClickHouse (insert failures before breaker saturates overflow)..."
   "${COMPOSE[@]}" stop clickhouse
   sleep 1
-  for i in $(seq 1 3); do
+  for _ in $(seq 1 3); do
     post_ingest >/dev/null || true
     sleep 1
   done
