@@ -24,7 +24,7 @@ prometheus = { version = "0.14", features = ["process"] }
 lazy_static = "1.5"
 opentelemetry = "0.22"
 opentelemetry-otlp = { version = "0.15", features = ["grpc-tonic"] }
-opentelemetry_sdk = { version = "0.22", features = ["rt-tokio"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-opentelemetry = "0.33"
