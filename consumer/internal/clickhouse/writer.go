@@ -1,3 +1,4 @@
+// Package clickhouse batches inference events and inserts them with breaker and overflow handoff.
 package clickhouse
 
 import (
@@ -27,29 +28,30 @@ type DLQHandoff interface {
 }
 
 type queuedEvent struct {
-	event  model.InferenceEvent
-	ticket uint64
+	event model.InferenceEvent
+	// recordID is a per-Accept call identifier used to signal handoff completion.
+	recordID uint64
 }
 
-type handoffTicket struct {
+type handoffSignal struct {
 	remaining int
 	done      chan struct{}
 }
 
 // BatchWriter buffers events and flushes to ClickHouse, overflow, or DLQ.
 type BatchWriter struct {
-	conn          ch.Conn
-	cfg           config.Config
-	overflow      redisoverflow.OverflowBuffer
-	dlq           DLQHandoff
-	m             *metrics.M
-	cb            *CircuitBreaker
-	mu            sync.Mutex
-	buf           []queuedEvent
-	tickets       map[uint64]*handoffTicket
-	nextID        uint64
-	flushMu       sync.Mutex
-	flushInFlight bool
+	conn           ch.Conn
+	cfg            config.Config
+	overflow       redisoverflow.OverflowBuffer
+	dlq            DLQHandoff
+	m              *metrics.M
+	cb             *CircuitBreaker
+	mu             sync.Mutex
+	buf            []queuedEvent
+	handoffSignals map[uint64]*handoffSignal
+	nextID         uint64
+	flushMu        sync.Mutex
+	flushInFlight  bool
 }
 
 // NewBatchWriter opens ClickHouse and wires dependencies.
@@ -67,13 +69,13 @@ func NewBatchWriter(ctx context.Context, cfg config.Config, overflow redisoverfl
 		return nil, fmt.Errorf("clickhouse ping: %w", err)
 	}
 	w := &BatchWriter{
-		conn:     conn,
-		cfg:      cfg,
-		overflow: overflow,
-		dlq:      dlq,
-		m:        m,
-		cb:       NewCircuitBreaker(cfg.CBFailures, cfg.CBResetTimeout),
-		tickets:  make(map[uint64]*handoffTicket),
+		conn:           conn,
+		cfg:            cfg,
+		overflow:       overflow,
+		dlq:            dlq,
+		m:              m,
+		cb:             NewCircuitBreaker(cfg.CBFailures, cfg.CBResetTimeout),
+		handoffSignals: make(map[uint64]*handoffSignal),
 	}
 	w.m.SetBreakerState(w.cb.State().String())
 	return w, nil
@@ -111,10 +113,10 @@ func (w *BatchWriter) Accept(ctx context.Context, events []model.InferenceEvent)
 	w.mu.Lock()
 	id := w.nextID
 	w.nextID++
-	ticket := &handoffTicket{remaining: len(events), done: make(chan struct{})}
-	w.tickets[id] = ticket
+	signal := &handoffSignal{remaining: len(events), done: make(chan struct{})}
+	w.handoffSignals[id] = signal
 	for _, e := range events {
-		w.buf = append(w.buf, queuedEvent{event: e, ticket: id})
+		w.buf = append(w.buf, queuedEvent{event: e, recordID: id})
 	}
 	shouldFlush := len(w.buf) >= w.cfg.BatchSize
 	w.mu.Unlock()
@@ -124,7 +126,7 @@ func (w *BatchWriter) Accept(ctx context.Context, events []model.InferenceEvent)
 	}
 
 	select {
-	case <-ticket.done:
+	case <-signal.done:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -172,22 +174,22 @@ func (w *BatchWriter) drainOverflow(ctx context.Context) {
 		if len(events) == 0 {
 			return
 		}
-		// Drained overflow events have no Kafka ticket; handoff is internal only.
+		// Drained overflow events have no external record signal; handoff is internal only.
 		w.handoffEvents(ctx, events, nil)
 	}
 }
 
 func (w *BatchWriter) handoffQueued(ctx context.Context, queued []queuedEvent) {
 	events := make([]model.InferenceEvent, len(queued))
-	tickets := make([]uint64, len(queued))
+	recordIDs := make([]uint64, len(queued))
 	for i, q := range queued {
 		events[i] = q.event
-		tickets[i] = q.ticket
+		recordIDs[i] = q.recordID
 	}
-	w.handoffEvents(ctx, events, tickets)
+	w.handoffEvents(ctx, events, recordIDs)
 }
 
-func (w *BatchWriter) handoffEvents(ctx context.Context, events []model.InferenceEvent, tickets []uint64) {
+func (w *BatchWriter) handoffEvents(ctx context.Context, events []model.InferenceEvent, recordIDs []uint64) {
 	if len(events) == 0 {
 		return
 	}
@@ -198,7 +200,7 @@ func (w *BatchWriter) handoffEvents(ctx context.Context, events []model.Inferenc
 			log.Printf("level=error msg=overflow_push_failed count=%d err=%v", len(events), err)
 			return
 		}
-		w.signalTickets(tickets, len(events))
+		w.signalHandoffSignals(recordIDs, len(events))
 		return
 	}
 
@@ -210,7 +212,7 @@ func (w *BatchWriter) handoffEvents(ctx context.Context, events []model.Inferenc
 		w.cb.RecordSuccess()
 		w.m.SetBreakerState(w.cb.State().String())
 		w.m.ClickHouseBatchSize.Observe(float64(len(events)))
-		w.signalTickets(tickets, len(events))
+		w.signalHandoffSignals(recordIDs, len(events))
 		return
 	}
 
@@ -223,7 +225,7 @@ func (w *BatchWriter) handoffEvents(ctx context.Context, events []model.Inferenc
 		log.Printf("level=error msg=overflow_push_after_ch_fail count=%d err=%v", len(events), err)
 		return
 	}
-	w.signalTickets(tickets, len(events))
+	w.signalHandoffSignals(recordIDs, len(events))
 }
 
 // insertWithRetries returns true when events were inserted or sent to DLQ.
@@ -275,36 +277,36 @@ func (w *BatchWriter) batchInsert(ctx context.Context, events []model.InferenceE
 	return batch.Send()
 }
 
-func (w *BatchWriter) signalTickets(tickets []uint64, count int) {
-	if len(tickets) == 0 {
+func (w *BatchWriter) signalHandoffSignals(recordIDs []uint64, count int) {
+	if len(recordIDs) == 0 {
 		return
 	}
-	if len(tickets) != count {
-		// Should not happen; fall back to completing all tickets touched.
+	if len(recordIDs) != count {
+		// Should not happen; fall back to completing all recordIDs touched.
 		seen := make(map[uint64]int)
-		for _, id := range tickets {
+		for _, id := range recordIDs {
 			seen[id]++
 		}
 		for id, n := range seen {
-			w.finishTicket(id, n)
+			w.finishHandoffSignal(id, n)
 		}
 		return
 	}
 	for i := 0; i < count; i++ {
-		w.finishTicket(tickets[i], 1)
+		w.finishHandoffSignal(recordIDs[i], 1)
 	}
 }
 
-func (w *BatchWriter) finishTicket(id uint64, n int) {
+func (w *BatchWriter) finishHandoffSignal(id uint64, n int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	t, ok := w.tickets[id]
+	t, ok := w.handoffSignals[id]
 	if !ok {
 		return
 	}
 	t.remaining -= n
 	if t.remaining <= 0 {
 		close(t.done)
-		delete(w.tickets, id)
+		delete(w.handoffSignals, id)
 	}
 }
