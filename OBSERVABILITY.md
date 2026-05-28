@@ -27,7 +27,7 @@ Prometheus runs in Docker and scrapes the host via `host.docker.internal` (see `
 | `wal_segments_pending` | Gauge | WAL segments with unacked entries |
 | `wal_replay_events_total` | Counter | Events replayed from WAL on startup |
 
-## Consumer metrics (Day 5–6)
+## Consumer metrics
 
 | Metric | Type | Meaning |
 |--------|------|---------|
@@ -66,7 +66,7 @@ Two provisioned dashboards (see `dashboards/` for canonical JSON; mirrored under
 
 Credentials: `admin` / `admin` (from `deploy/.env`).
 
-### Product SLO panels (G-05)
+### Product SLO panels
 
 | Panel | Source | Query |
 |-------|--------|-------|

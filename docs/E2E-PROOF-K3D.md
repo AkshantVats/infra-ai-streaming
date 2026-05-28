@@ -23,7 +23,7 @@ Automated log from `./scripts/e2e-k3d-full.sh`.
 
 **WARN (non-fatal):** C1 ingestion health after rollout; C2 breaker/overflow metrics not tripped on M1.
 
-## Test matrix � run `20260527T064409Z` (G-09 branch, M1)
+## Test matrix � run `20260527T064409Z` (M1)
 
 | Step | Status | Exit |
 |------|--------|------|
@@ -42,7 +42,7 @@ Automated log from `./scripts/e2e-k3d-full.sh`.
 | HPA status | GREEN | 0 |
 | **C2 retry** (SKIP_DEPLOY, 300s CH wait) | **GREEN** | 0 (breaker/overflow WARN only) |
 
-**Wall time:** ~711s (~11.9 min). **Branch:** `feat/consumer-anomaly-zscore-detection` @ `d98d99a`. **Topics:** `ai_anomalies` added to Helm init (G-09).
+**Wall time:** ~711s (~11.9 min). **Branch:** `feat/consumer-anomaly-zscore-detection` @ `d98d99a`. **Topics:** `ai_anomalies` added to Helm init.
 
 ## Test matrix � run `20260525T135429Z` (all GREEN)
 
@@ -3978,7 +3978,7 @@ metadata:
 data:
   init.sql: |
     -- Applied by the `clickhouse-init` service in `deploy/docker-compose.yml`
-    -- (`clickhouse-client --multiquery < /init.sql`). Full InferenceEvent schema for Day 5 writer.
+    -- (`clickhouse-client --multiquery < /init.sql`). Full InferenceEvent schema for the Go batch writer.
     CREATE DATABASE IF NOT EXISTS infra_ai;
     
     DROP TABLE IF EXISTS infra_ai.inference_events;

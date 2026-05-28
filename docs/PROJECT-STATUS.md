@@ -1,62 +1,56 @@
-# Project status (honest audit)
+# Project status
 
-This document states what exists in the repository today versus what is still design or backlog. It is meant for operators and contributors, not marketing.
+Honest snapshot of what exists in the repository today versus planned work. For operators and contributors — not marketing copy.
 
-## Production-grade in tree today
+## Shipped today
 
-- **LICENSE**: MIT, suitable for open source distribution.
-- **DESIGN.md**: Architecture and data-plane decisions are documented at a level sufficient to implement the full stack.
-- **CI** (`.github/workflows/ci.yml`): Rust fmt/clippy/test, Go test, Helm template, shellcheck, gitleaks on PRs and `main`.
-- **E2E k3d workflow** (`.github/workflows/e2e-k3d-dispatch.yml`): weekly + manual full M1 E2E (not on every PR).
-- **Cargo.lock**: Committed for reproducible Rust builds of the ingestion crate.
-- **Ingestion Rust library + binary**: Builds on toolchain **1.86** (`rust-toolchain.toml`). Unit tests cover configuration defaults, WAL behavior, rate limiting primitives, and related units under `ingestion/`.
-- **Runnable `ingestion` binary** (`cargo build -p ingestion --bin ingestion` / `cargo run -p ingestion`): Axum HTTP server on `HTTP_PORT` (default **8080**) with `GET /health` (version + git SHA + build time), `GET /metrics`, and `POST /ingest`.
-- **WAL + Kafka produce path**: Handler appends to a segment WAL (`WAL_DIR`, default `/tmp/wal`) before enqueue; a background task drives an **rdkafka** producer to `KAFKA_TOPIC` with DLQ on persistent failure; WAL entries are **mark_acked** after broker delivery. Startup **replays unacked** WAL entries into the channel.
-- **Redis rate limiting**: Per-tenant token bucket on ingest (fail-open when Redis is unavailable, per design).
-- **Go consumer** (`consumer/`): franz-go reader → ClickHouse **BatchWriter** (1000 events / 500ms), **circuit breaker**, **Redis overflow**, **DLQ** (`ai_inference_dlq`), Prometheus on **`:9091`**. **Z-score latency anomaly detection** publishes to **`ai_anomalies`**. Unit tests for JSON, breaker, row mapping.
-- **OBSERVABILITY.md**: Metrics catalog, SLO sketches, ClickHouse verification queries.
-- **docs/SLOs.md**, **docs/DATA-RETENTION.md**, **docs/SECURITY-HARDENING.md**: production posture docs (honest placeholders where not implemented).
-- **docs/ARCHITECTURE-AND-FLOWS.md**: Architecture, milestone status, code walkthrough, lifecycle paths, dual-dashboard observability matrix, troubleshooting.
-- **Local dependency stack**: Docker Compose runs **Redis**, **Redpanda**, **ClickHouse**, **Prometheus**, **Grafana**, plus one-shot **redpanda-init** (topics) and **clickhouse-init** (DDL). See [deploy/README.md](../deploy/README.md) for ports.
-- **Helm / k3d:** Umbrella chart `deploy/helm/lensai/`, Dockerfiles, k3d config, consumer HPA on `kafka_consumer_lag_sum` via prometheus-adapter. Three-command path in [deploy/README.md](../deploy/README.md).
+| Area | Status | Notes |
+|------|--------|-------|
+| **Rust ingestion** | ✅ | Axum `/ingest`, WAL + fsync, Kafka producer, Redis rate limits (fail-open), Prometheus |
+| **Go consumer** | ✅ | Batch writer (1000 / 500ms), circuit breaker, Redis overflow, DLQ, lag metrics, z-score anomaly topic |
+| **Local stack** | ✅ | Docker Compose: Redis, Redpanda, ClickHouse, Prometheus, Grafana |
+| **Kubernetes** | ✅ | Helm chart `deploy/helm/lensai/`, k3d path, consumer HPA on Kafka lag |
+| **Observability** | ✅ | Product SLO + Local E2E Grafana dashboards, `OBSERVABILITY.md`, `docs/SLOs.md` |
+| **CI** | ✅ | Rust fmt/clippy/test, Go test, Helm template, shellcheck, gitleaks |
+| **E2E** | ✅ | `./scripts/run.sh --profile m1` — k3d deploy, smoke, chaos |
+| **Docs** | ✅ | Architecture, runbook, chaos, security hardening, data retention |
 
-## External OSS contributions
+## Roadmap (not yet production-complete)
 
-- **Vector** [#25455](https://github.com/vectordotdev/vector/issues/25455) — memory enrichment counter `_total` suffix fix: [PR #25496](https://github.com/vectordotdev/vector/pull/25496) (open).
+| Item | Priority | Notes |
+|------|----------|-------|
+| AuthN/AuthZ on `/ingest` | High | API keys, gateway OIDC, or mTLS |
+| Partition key `hash(tenant_id:model_id)` | Medium | Today keys by `tenant_id` only |
+| Multi-region HA | Medium | Kafka, ClickHouse, Redis topologies |
+| ClickHouse backup/restore automation | Medium | Documented in `docs/DATA-RETENTION.md`; no in-tree tooling |
+| OTLP tracing wired end-to-end | Low | Env stubs exist; not fully wired in compose |
+| Load benchmarks in CI | Low | k6 scripts planned; numbers not gated in CI |
 
-## Not production-complete yet (gaps)
+## External contributions
 
-- **AuthN/AuthZ** on `/ingest` (API keys, OIDC gateway, mTLS).
-- **Multi-region / HA** Kafka, ClickHouse, Redis topologies.
-- **Automated ClickHouse backup/restore** in-tree.
-- **Partition key:** producer keys by `tenant_id` only; DESIGN target `hash(tenant_id:model_id)` not implemented.
+- **Vector** [#25455](https://github.com/vectordotdev/vector/issues/25455) — memory enrichment counter fix: [PR #25496](https://github.com/vectordotdev/vector/pull/25496) (open).
 
-## E2E status
+## E2E verification
 
-| Step | Status |
-|------|--------|
-| `docker compose up` — long-running services + init jobs | Implemented |
-| Topics `ai_inference_events`, `ai_inference_dlq`, `ai_anomalies` | `redpanda-init` / Helm init |
-| `curl /ingest` → 202 | Requires running ingestion binary |
-| ClickHouse `infra_ai.inference_events` rows with `cost_usd` | Requires running consumer + ingest |
-| Prometheus scrape ingestion `:8080` and consumer `:9091` | Compose + host binaries |
-| Grafana **Local E2E** ops dashboard | Provisioned (`ai-inference-e2e-local`) |
-| Grafana **Product SLOs** dashboard | Provisioned (`ai-inference-product`) |
-| `kafka_consumer_lag_events` on consumer `:9091` | Implemented in Go reader |
-| k3d + Helm full stack + lag HPA | `deploy/helm/lensai/`, `./scripts/e2e-k3d-full.sh` |
+| Step | How to verify |
+|------|----------------|
+| Unit tests | `cargo test -p ingestion` · `cd consumer && go test ./...` |
+| Compose stack | `./scripts/run.sh --profile m1 --target compose` |
+| Full k3d E2E | `./scripts/run.sh --profile m1` |
+| Manual checklist | [`docs/E2E-CHECKLIST.md`](E2E-CHECKLIST.md) |
 
-## 3-step local demo (HTTP → Kafka → ClickHouse)
+## Quick demo (Compose + host binaries)
 
-1. **Stack:** `cp deploy/.env.example deploy/.env && docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d` — Grafana http://localhost:3000 (`admin`/`admin`) → **Local E2E** (`/d/ai-inference-e2e-local`) or **Product SLOs** (`/d/ai-inference-product`).
-2. **Pipeline:** Terminal A — `cd consumer && set -a && source ../deploy/.env && set +a && go run ./cmd/consumer`. Terminal B — `set -a && source deploy/.env && set +a && cargo run -p ingestion`.
-3. **Proof:** `curl -X POST http://localhost:8080/ingest …` (see root `README.md`); ClickHouse — `SELECT count(), max(cost_usd) FROM infra_ai.inference_events`; Grafana consumer panels + Prometheus `up{job="consumer"}`.
+1. `./scripts/run.sh --profile m1 --target compose`
+2. Run consumer and ingestion with `deploy/compose/values-m1.env` sourced (see README).
+3. `curl` `/ingest` → check ClickHouse `infra_ai.inference_events` and Grafana dashboards.
 
-Or: `./scripts/smoke-e2e.sh` (compose + tests; ingest + CH check if services are up).
+Or: `./scripts/smoke-e2e.sh` after Compose is up.
 
-## How to use this doc
+## Related docs
 
-- For **local development**, see [dev-macos.md](dev-macos.md) and [../deploy/docker-compose.yml](../deploy/docker-compose.yml). Compose services use `env_file: .env` under `deploy/` — copy [../deploy/.env.example](../deploy/.env.example) to `deploy/.env` first.
-- For **observability**, see [../OBSERVABILITY.md](../OBSERVABILITY.md) and [SLOs.md](SLOs.md).
-- For **architecture and observability mapping**, see [ARCHITECTURE-AND-FLOWS.md](ARCHITECTURE-AND-FLOWS.md).
-- For **E2E flows, Grafana panel guide, and demo scenarios**, see [END-TO-END-FLOWS.md](END-TO-END-FLOWS.md) and `./scripts/demo-flows.sh`.
-- For **contributing** (tests, compose, PR expectations), see [../CONTRIBUTING.md](../CONTRIBUTING.md).
+- [ARCHITECTURE.md](ARCHITECTURE.md) — stable component overview
+- [ARCHITECTURE-AND-FLOWS.md](ARCHITECTURE-AND-FLOWS.md) — lifecycles, code walkthrough, troubleshooting
+- [END-TO-END-FLOWS.md](END-TO-END-FLOWS.md) — demo scenarios and Grafana panel guide
+- [deploy/README.md](../deploy/README.md) — deploy profiles and ports
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — PR expectations

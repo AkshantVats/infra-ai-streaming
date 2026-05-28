@@ -1,0 +1,46 @@
+# Example custom Helm values — copy and edit for your cluster:
+#
+#   cp deploy/helm/lensai/values.example.yaml deploy/helm/lensai/values.mycluster.yaml
+#   ./scripts/run.sh --values deploy/helm/lensai/values.mycluster.yaml --target helm
+#
+# Built-in profiles (no copy needed):
+#   default  → values.yaml       (production-shaped defaults)
+#   dev      → values-dev.yaml   (minimal local)
+#   m1       → values-m1.yaml    (Apple Silicon / low RAM)
+#   k3d      → values-k3d.yaml   (workstation k3d + HPA demo)
+
+global:
+  namespace: lensai
+
+ingestion:
+  replicas: 2
+  image:
+    repository: lensai/ingestion
+    tag: local
+    pullPolicy: IfNotPresent
+  wal:
+    persistence:
+      enabled: false
+      size: 1Gi
+
+consumer:
+  replicas: 1
+  image:
+    repository: lensai/consumer
+    tag: local
+    pullPolicy: IfNotPresent
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 8
+    targetAverageValue: "500"
+
+redpanda:
+  memory: 1G
+  topicPartitions: 4
+
+clickhouse:
+  storage: 20Gi
+
+prometheusAdapter:
+  enabled: true

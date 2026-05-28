@@ -32,7 +32,8 @@ PR CI (`.github/workflows/ci.yml`) runs the same gates on every push to `main` a
 Requires Docker, k3d, helm, kubectl:
 
 ```bash
-HELM_WAIT_TIMEOUT=2m ./scripts/e2e-k3d-full.sh
+./scripts/run.sh --profile m1
+# or: HELM_WAIT_TIMEOUT=2m ./scripts/e2e-k3d-full.sh
 ```
 
 Optional: weekly / manual full E2E in GitHub Actions — [`.github/workflows/e2e-k3d-dispatch.yml`](.github/workflows/e2e-k3d-dispatch.yml).
@@ -70,6 +71,16 @@ Or [`scripts/smoke-e2e.sh`](scripts/smoke-e2e.sh) after Compose is up.
 `/health` on ingestion (`:8080`) and consumer (`:9091`) returns `version`, `git_sha`, and `build_time`. Docker builds accept `GIT_SHA` and `BUILD_TIME` build-args (see [RELEASE.md](RELEASE.md)).
 
 ## Pull requests
+
+Before opening or updating a PR:
+
+1. `git fetch origin`
+2. Merge or rebase `origin/main` onto your branch
+3. Confirm mergeable locally (`git merge origin/main` with no conflicts) or on GitHub
+4. Resolve any conflicts (compose, Helm values, `dashboards/`, shared scripts)
+5. Re-run the **local CI matrix** and any smoke/E2E you relied on for the change
+
+Then:
 
 - Keep changes focused; match existing style (imports, error handling, docs level).
 - Ensure the **local CI matrix** above passes.

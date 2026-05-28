@@ -39,6 +39,6 @@ For the full walkthrough (diagrams, event lifecycle, troubleshooting matrix), se
 ## Where to look
 
 - **Runbook**: `docs/RUNBOOK.md`
-- **E2E (k3d, M1-safe)**: `./scripts/e2e-k3d-full.sh` + `docs/E2E-PROOF-K3D.md`
+- **E2E (k3d, M1-safe)**: `./scripts/run.sh --profile m1` + `docs/E2E-PROOF-K3D.md`
 - **Ops & metrics catalog**: `OBSERVABILITY.md`
 - **Deployment**: `deploy/README.md`, `deploy/helm/lensai/`

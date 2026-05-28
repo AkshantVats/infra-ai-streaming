@@ -1,4 +1,4 @@
-# End-to-end flows — infra-ai-streaming (Days 0–5)
+# End-to-end flows — infra-ai-streaming
 
 Onboarding guide for the local pipeline: **HTTP ingest (Rust) → WAL → Kafka → Go consumer → ClickHouse**, with **Redis** (rate limits + overflow), **DLQ**, and **Prometheus/Grafana** proof. Metric names match code; dashboard UIDs: **`ai-inference-e2e-local`**, **`ai-inference-product`**.
 
@@ -10,7 +10,7 @@ Related: [OBSERVABILITY.md](../OBSERVABILITY.md) (metric catalog, SLO sketches),
 
 ## Table of contents
 
-1. [Timeline: Days 0–5](#timeline-days-05)
+1. [Timeline: Pipeline setup](#timeline-pipeline-setup)
 2. [Architecture and file map](#architecture-and-file-map)
 3. [Happy path (E2E)](#happy-path-e2e)
 4. [Failure and edge paths](#failure-and-edge-paths)
@@ -21,19 +21,18 @@ Related: [OBSERVABILITY.md](../OBSERVABILITY.md) (metric catalog, SLO sketches),
 
 ---
 
-## Timeline: Days 0–5
+## Timeline: Pipeline setup
 
-| Day | Milestone | What landed |
+| Stage | Milestone | What landed |
 |-----|-----------|-------------|
-| **0** | Repo bootstrap | Layout in [docs/7-day-plan.md](7-day-plan.md), MIT license, CI skeleton |
+| **0** | Repo bootstrap | Repo layout, MIT license, CI skeleton |
 | **1** | Design + README | [DESIGN.md](../DESIGN.md) (CAP, partitions, backpressure, failure modes), [README.md](../README.md) architecture narrative |
 | **2** | Rust ingestion (part 1) | `ingestion/` crate: config, metrics registry, WAL writer, rate-limit primitives, validation tests |
 | **3** | Rust ingestion (part 2) | Runnable **Axum** binary: `POST /ingest`, WAL-before-channel, **rdkafka** producer, DLQ on produce failure, `GET /metrics` |
 | **4** | Deploy stack + consumer skeleton | [deploy/docker-compose.yml](../deploy/docker-compose.yml): Redis, Redpanda, ClickHouse, Prometheus, Grafana; topics via `redpanda-init`; DDL via `clickhouse-init`; Go **franz-go** reader (stdout / handoff wiring) |
-| **5** | ClickHouse writer (G-03) | **BatchWriter** (1000 events or 500ms), **circuit breaker**, **Redis LIST overflow**, **DLQ** after 3 insert retries, consumer Prometheus on `:9091`, Grafana dashboard **`ai-inference-e2e-local`**, [OBSERVABILITY.md](../OBSERVABILITY.md) |
-| **7** | Per-tenant rate limits + CHAOS.md (G-06) | **Per-tenant `max_events_per_sec` / `burst_multiplier`** via JSON config (`TENANT_LIMITS_PATH`), **`redis_rate_limit_degraded_total`** metric, **[CHAOS.md](../CHAOS.md)** failure runbook (5 scenarios with local repro) |
-
-Current feature branch reference: `feat/per-tenant-rate-limits-chaos` (Day 7 per-tenant limits + chaos).
+| **5** | ClickHouse writer | **BatchWriter** (1000 events or 500ms), **circuit breaker**, **Redis LIST overflow**, **DLQ** after 3 insert retries, consumer Prometheus on `:9091`, Grafana dashboard **`ai-inference-e2e-local`**, [OBSERVABILITY.md](../OBSERVABILITY.md) |
+| **6** | Product SLOs + lag metrics | Product dashboard, `kafka_consumer_lag_events`, HPA on lag (k3d profile) |
+| **7** | Per-tenant rate limits + chaos | **Per-tenant `max_events_per_sec` / `burst_multiplier`** via JSON config (`TENANT_LIMITS_PATH`), **`redis_rate_limit_degraded_total`** metric, **[CHAOS.md](../CHAOS.md)** failure runbook |
 
 ---
 
@@ -123,7 +122,7 @@ flowchart TB
 | Row mapping | `consumer/internal/clickhouse/row.go` | `InferenceEvent` → `infra_ai.inference_events` |
 | Redis overflow | `consumer/internal/redis/overflow.go` | `LPUSH` / `RPOP`, `redis_overflow_depth` gauge |
 | Event model | `consumer/internal/model/event.go` | JSON structs matching Rust envelope |
-| Metrics | `consumer/internal/metrics/metrics.go` | Day 5 consumer metric set |
+| Metrics | `consumer/internal/metrics/metrics.go` | consumer metric set |
 | Metrics HTTP | `consumer/internal/metrics/server.go` | `METRICS_PORT` (default **9091**) |
 
 ### Deploy & ops (`deploy/`)
@@ -222,7 +221,7 @@ While breaker still allows inserts (or on partial failure path):
 1. `insertWithRetries` attempts batch insert **3** times (`CLICKHOUSE_INSERT_RETRIES`).
 2. If all fail, **each event** is published to `ai_inference_dlq` via `DLQPublisher`.
 3. `dlq_events_total` increments per event.
-4. Tickets complete → offset commits (no infinite replay for that batch).
+4. Handoff completes → offset commits (no infinite replay for that batch).
 
 DLQ message shape (`consumer/internal/kafka/dlq.go`): `{ "event", "error", "retries", "failed_at_unix_ms" }`.
 
@@ -245,7 +244,7 @@ DLQ message shape (`consumer/internal/kafka/dlq.go`): `{ "event", "error", "retr
 
 **Demo:** `./scripts/demo-flows.sh rate-limit` (optionally restart ingestion with `RATE_LIMIT_DEFAULT_RPS=10`).
 
-### Per-tenant rate limit (Day 7)
+### Per-tenant rate limit
 
 When `TENANT_LIMITS_PATH` is set, each tenant resolves its own `max_events_per_sec` / `burst_multiplier` from the JSON file. Unknown tenants fall back to the `"default"` block.
 
@@ -255,7 +254,7 @@ When `TENANT_LIMITS_PATH` is set, each tenant resolves its own `max_events_per_s
 
 **Demo:** `./scripts/demo-flows.sh per-tenant-limit`.
 
-### Redis lost → fail-open (Day 7)
+### Redis lost → fail-open
 
 When Redis is unavailable, rate limiting fails open — all requests accepted.
 
@@ -351,7 +350,7 @@ After multi-tenant ingest, open **Product SLOs** and confirm all four panels hav
 | **Ingestion scrape UP** | `up{job="ingestion"}` | 1 (green) | 0 | Rust metrics reachable from Prometheus |
 | **Consumer scrape UP** | `up{job="consumer"}` | 1 | 0 | Go metrics on `:9091` |
 | **Prometheus scrape duration** | `scrape_duration_seconds{job=~"ingestion\|consumer"}` | Stable &lt; 1s | Spikes / gaps | Scrape health, not business logic |
-| **Consumer path** (text) | — | — | — | Reminder: Day 5 writer path |
+| **Consumer path** (text) | — | — | — | Reminder: ClickHouse writer path |
 | **Kafka handoff rate** | `rate(kafka_records_processed_total[5m])` | Rises with ingest | Flat while ingesting | Consumer completed handoff (CH/overflow/DLQ) |
 | **ClickHouse flush latency (p99)** | `histogram_quantile(0.99, sum(rate(clickhouse_flush_duration_seconds_bucket[5m])) by (le))` | Low tens–hundreds ms locally | Sustained high / timeout shape | CH insert wall time |
 | **Circuit breaker OPEN** | `circuit_breaker_state{state="open"}` | 0 (closed) | 1 during CH outage | Breaker protecting ClickHouse |
@@ -439,7 +438,7 @@ cd consumer && go test ./...
 cargo test -p ingestion
 ```
 
-Added coverage: `writer_handoff_test.go` (ticket completion, overflow when breaker open), existing `breaker_test.go`, `reader_test.go`, `row_test.go`.
+Added coverage: `writer_handoff_test.go` (handoff completion, overflow when breaker open), existing `breaker_test.go`, `reader_test.go`, `row_test.go`.
 
 ### Scenario matrix (quick reference)
 

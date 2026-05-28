@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# scripts/e2e-k3d-full.sh — One-command M1 E2E: preflight → k3d deploy → sequential cluster tests.
+# scripts/e2e-k3d-full.sh — Preflight → k3d deploy → sequential cluster tests.
 #
+# Prefer the config-driven entry point:
+#   ./scripts/run.sh --profile m1
+#
+# Direct use (values from LENSAI_HELM_VALUES or HELM_VALUES_FILE):
 #   ./scripts/e2e-k3d-full.sh
 #
 # Why Helm waits: `helm upgrade --install --wait` blocks until Deployments, StatefulSets,
@@ -25,7 +29,8 @@ NS="${K8S_NAMESPACE:-lensai}"
 RELEASE="${HELM_RELEASE:-lensai}"
 CLUSTER="${K3D_CLUSTER:-lensai}"
 HELM_CHART="deploy/helm/lensai"
-VALUES_M1="${HELM_CHART}/values-m1.yaml"
+HELM_VALUES="${HELM_VALUES_FILE:-${LENSAI_HELM_VALUES:-${HELM_CHART}/values-m1.yaml}}"
+SKIP_CHAOS="${SKIP_CHAOS:-0}"
 PROOF="${ROOT}/docs/E2E-PROOF-K3D.md"
 CONTINUE_ON_FAIL="${CONTINUE_ON_FAIL:-0}"
 HELM_WAIT_TIMEOUT="${HELM_WAIT_TIMEOUT:-2m}"
@@ -148,7 +153,7 @@ diagnose_not_ready() {
       echo "--- kubectl logs ${pod} (previous) ---"
       kubectl logs -n "${NS}" "$pod" --previous --tail=40 2>&1 || true
     done
-    echo "Hints: Redpanda OOM → raise values-m1 redpanda limits; consumer → KAFKA_BROKERS / CLICKHOUSE_DSN; ImagePullBackOff → ./deploy/k3d/up.sh"
+    echo "Hints: Redpanda OOM → raise redpanda limits in ${HELM_VALUES}; consumer → KAFKA_BROKERS / CLICKHOUSE_DSN; ImagePullBackOff → ./deploy/k3d/up.sh"
   } | tee -a "$PROOF_TMP"
 }
 
@@ -210,8 +215,8 @@ phase_a() {
   fi
   run_step_or_abort "cargo test ingestion" RED cargo test -p ingestion
   run_step_or_abort "go test consumer" RED bash -c 'cd consumer && go test ./...'
-  run_step_or_abort "helm template values-m1" RED helm template "${RELEASE}" "${HELM_CHART}" \
-    -f "${VALUES_M1}" --namespace "${NS}" >/dev/null
+  run_step_or_abort "helm template (${HELM_VALUES})" RED helm template "${RELEASE}" "${HELM_CHART}" \
+    -f "${HELM_VALUES}" --namespace "${NS}" >/dev/null
   local sh
   for sh in scripts/*.sh chaos/*.sh; do
     [[ -f "$sh" ]] || continue
@@ -225,7 +230,7 @@ phase_a() {
 
 # ── Phase B: Deploy ──────────────────────────────────────────────────────────
 phase_b() {
-  log "${BOLD}Phase B — Deploy (k3d + Helm M1)${NC}"
+  log "${BOLD}Phase B — Deploy (k3d + Helm: ${HELM_VALUES})${NC}"
   if [[ "${SKIP_DEPLOY:-}" == "1" ]]; then
     record_step "deploy-skip" "YELLOW" "SKIP_DEPLOY=1"
     wait_cluster_ready
@@ -241,9 +246,9 @@ phase_b() {
 
   run_step_or_abort "k3d up (cluster + images)" RED ./deploy/k3d/up.sh
   run_step_or_abort "helm dependency update" RED helm dependency update "${HELM_CHART}"
-  run_step_or_abort "helm upgrade --install (values-m1)" RED helm upgrade --install "${RELEASE}" "${HELM_CHART}" \
+  run_step_or_abort "helm upgrade --install" RED helm upgrade --install "${RELEASE}" "${HELM_CHART}" \
     -n "${NS}" --create-namespace \
-    -f "${VALUES_M1}" \
+    -f "${HELM_VALUES}" \
     --timeout "${HELM_WAIT_TIMEOUT}" \
     --wait=false \
     --wait-for-jobs=false
@@ -265,11 +270,15 @@ phase_c() {
   export REDPANDA_READY_TIMEOUT_SEC="${REDPANDA_READY_TIMEOUT_SEC:-300}"
   run_step_or_abort "smoke-k8s-e2e" RED ./scripts/smoke-k8s-e2e.sh
 
-  run_step_or_abort "chaos C1 kill-redpanda (k8s)" RED env REDPANDA_READY_TIMEOUT_SEC="${REDPANDA_READY_TIMEOUT_SEC}" \
-    ./chaos/run_chaos_k8s.sh kill-redpanda
-  run_step_or_abort "chaos C2 throttle-clickhouse (k8s)" RED env CH_READY_TIMEOUT_SEC="${CH_READY_TIMEOUT_SEC}" \
-    ./chaos/run_chaos_k8s.sh throttle-clickhouse
-  run_step_or_abort "chaos load-m1 (k8s)" RED env LOAD_EVENTS=1000 LOAD_DURATION_SEC=10 ./chaos/run_chaos_k8s.sh load-m1
+  if [[ "${SKIP_CHAOS}" == "1" ]]; then
+    record_step "chaos-skip" "YELLOW" "SKIP_CHAOS=1"
+  else
+    run_step_or_abort "chaos C1 kill-redpanda (k8s)" RED env REDPANDA_READY_TIMEOUT_SEC="${REDPANDA_READY_TIMEOUT_SEC}" \
+      ./chaos/run_chaos_k8s.sh kill-redpanda
+    run_step_or_abort "chaos C2 throttle-clickhouse (k8s)" RED env CH_READY_TIMEOUT_SEC="${CH_READY_TIMEOUT_SEC}" \
+      ./chaos/run_chaos_k8s.sh throttle-clickhouse
+    run_step_or_abort "chaos load-m1 (k8s)" RED env LOAD_EVENTS=1000 LOAD_DURATION_SEC=10 ./chaos/run_chaos_k8s.sh load-m1
+  fi
 
   run_step "HPA status" YELLOW bash -c "
     kubectl get hpa -n '${NS}' 2>&1 || echo 'No HPA (expected on M1 values-m1)'
@@ -328,8 +337,10 @@ fi
   echo "Host: $(uname -a)"
   echo "Branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
   echo "CONTINUE_ON_FAIL=${CONTINUE_ON_FAIL}"
+  echo "HELM_VALUES=${HELM_VALUES}"
   echo "HELM_WAIT_TIMEOUT=${HELM_WAIT_TIMEOUT}"
   echo "POD_WAIT_TIMEOUT=${POD_WAIT_TIMEOUT}"
+  echo "SKIP_CHAOS=${SKIP_CHAOS}"
   echo "CH_READY_TIMEOUT_SEC=${CH_READY_TIMEOUT_SEC:-300}"
   echo "REDPANDA_READY_TIMEOUT_SEC=${REDPANDA_READY_TIMEOUT_SEC:-300}"
 } >"$PROOF_TMP"

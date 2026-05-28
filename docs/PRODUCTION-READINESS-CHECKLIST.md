@@ -76,7 +76,7 @@ Rust ingestion (`ingestion/`), Go consumer (`consumer/`), Kafka-compatible broke
   - Secrets: gitleaks
 
 - **End-to-end verification**
-  - Local: `HELM_WAIT_TIMEOUT=2m ./scripts/e2e-k3d-full.sh` — uses `values-m1.yaml`.
+  - Local: `./scripts/run.sh --profile m1` — uses `values-m1.yaml`.
   - CI (optional): `.github/workflows/e2e-k3d-dispatch.yml` — weekly cron + `workflow_dispatch`, 30m timeout.
   - Checklist: [`docs/E2E-CHECKLIST.md`](E2E-CHECKLIST.md).
   - Proof log: `docs/E2E-PROOF-K3D.md`.

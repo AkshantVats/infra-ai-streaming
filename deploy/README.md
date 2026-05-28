@@ -2,6 +2,28 @@
 
 Two paths: **Docker Compose** (fast local dev) and **k3d + Helm** (full stack in Kubernetes with lag-driven HPA).
 
+**Recommended entry point:** `./scripts/run.sh` — see profile table in root [README.md](../README.md).
+
+---
+
+## Configuration profiles
+
+| Profile | Helm values | Compose env |
+|---------|-------------|-------------|
+| `m1` (default for E2E) | `helm/lensai/values-m1.yaml` | `compose/values-m1.env` |
+| `dev` | `helm/lensai/values-dev.yaml` | `compose/values-dev.env` |
+| `default` | `helm/lensai/values.yaml` | `compose/values-dev.env` |
+| `k3d` | `helm/lensai/values-k3d.yaml` | — |
+| custom | Copy `helm/lensai/values.example.yaml` → `values.mycluster.yaml` | Copy `deploy/.env.example` → `deploy/.env` |
+
+```bash
+./scripts/run.sh --profile m1                    # full k3d E2E
+./scripts/run.sh --profile m1 --target compose   # Docker Compose only
+./scripts/run.sh --values path/to/custom.yaml --target helm
+```
+
+---
+
 ## Docker Compose (primary dev loop)
 
 [`docker-compose.yml`](docker-compose.yml) runs:
@@ -10,67 +32,49 @@ Two paths: **Docker Compose** (fast local dev) and **k3d + Helm** (full stack in
 |---------|------------|---------|
 | **redis** | 6379 | Rate limiting (ingestion) |
 | **redpanda** | 9092, 9644 | Event bus |
-| **redpanda-init** | — (one-shot) | Topics `ai_inference_events`, `ai_inference_dlq` |
+| **redpanda-init** | — (one-shot) | Topics `ai_inference_events`, `ai_inference_dlq`, `ai_anomalies` |
 | **clickhouse** | 8123, 9000 | Analytical store |
 | **clickhouse-init** | — (one-shot) | DDL from `clickhouse/init.sql` |
 | **prometheus** | 9090 | Scrapes host `:8080` / `:9091` |
 | **grafana** | 3000 | Dashboards (`admin` / `admin`) |
 
-```bash
-cp .env.example .env
-docker compose --env-file .env -f docker-compose.yml up -d
-```
-
-From repo root:
+Classic workflow (without `run.sh`):
 
 ```bash
 cp deploy/.env.example deploy/.env
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 ```
 
-E2E with host binaries: see root `README.md` or [`../scripts/smoke-e2e.sh`](../scripts/smoke-e2e.sh).
+E2E with host binaries: root `README.md` or [`../scripts/smoke-e2e.sh`](../scripts/smoke-e2e.sh).
 
 ---
 
 ## One-command E2E on M1
 
-Single entry point: preflight unit tests → tear down compose → k3d + Helm (`values-m1.yaml`) → smoke + chaos + reduced load on the **same** cluster.
-
 ```bash
-./scripts/e2e-k3d-full.sh
+./scripts/run.sh --profile m1
+# equivalent: HELM_WAIT_TIMEOUT=2m ./scripts/e2e-k3d-full.sh
 ```
 
-Optional: `CONTINUE_ON_FAIL=1` to run all steps and get a GREEN/YELLOW/RED summary; `SKIP_DEPLOY=1` if the cluster is already up. Proof log: [`docs/E2E-PROOF-K3D.md`](../docs/E2E-PROOF-K3D.md).
+Optional: `CONTINUE_ON_FAIL=1`, `SKIP_DEPLOY=1`, `--skip-chaos`. Proof log: [`docs/E2E-PROOF-K3D.md`](../docs/E2E-PROOF-K3D.md).
 
-**Why Helm used to wait ~15 minutes:** `helm upgrade --install --wait` blocks until every Deployment, StatefulSet, and hook Job is ready. On M1, Redpanda or the consumer often hit `CrashLoopBackOff` (OOM from tight memory limits, or probes firing before slow startup), so Helm sat until `--timeout` (formerly 15m). The e2e script now runs `helm upgrade` with a **2m** chart timeout (no global `--wait`), then `kubectl wait` per critical workload (default **120s** each). If pods are still not ready, it prints `kubectl describe` and `kubectl logs` and exits — fix values or cluster, then re-run.
+**Helm wait strategy:** the E2E script uses a short Helm timeout (default **2m**, no global `--wait`), then `kubectl wait` per critical workload (default **120s** each). On failure it prints `kubectl describe` and logs.
 
-Override waits: `HELM_WAIT_TIMEOUT=2m` `POD_WAIT_TIMEOUT=120s`.
+Override: `HELM_WAIT_TIMEOUT=2m` `POD_WAIT_TIMEOUT=120s`.
 
-M1 limits are in [`helm/lensai/values-m1.yaml`](helm/lensai/values-m1.yaml) (low CPU/mem, HPA off, Redpanda 1.5Gi limit / 1G `--memory`). If k3d OOMs, raise Docker memory or stop compose, then re-run.
+M1 limits: [`helm/lensai/values-m1.yaml`](helm/lensai/values-m1.yaml). If k3d OOMs, raise Docker memory or stop compose first.
 
 ---
 
-## k3d + Helm — manual steps (M1 default)
+## k3d + Helm — manual steps
 
-**On a laptop, prefer the one-command path above.** For step-by-step debugging, use **`values-m1.yaml`** (not default `values.yaml` or `values-k3d.yaml`).
+For step-by-step debugging, use **`values-m1.yaml`** on laptops (not default `values.yaml`).
 
 **Prerequisites:** Docker ≥ 8 GB RAM, `k3d`, `helm`, `kubectl`, Rust 1.86, Go 1.22+.
 
 ```bash
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml down
-```
-
-### 1) Cluster + images
-
-```bash
 ./deploy/k3d/up.sh
-```
-
-Creates cluster `lensai`, builds `lensai/ingestion:local` and `lensai/consumer:local`, imports into k3d.
-
-### 2) Helm install (M1)
-
-```bash
 helm dependency update deploy/helm/lensai
 HELM_WAIT_TIMEOUT=2m helm upgrade --install lensai deploy/helm/lensai \
   -n lensai --create-namespace \
@@ -78,47 +82,34 @@ HELM_WAIT_TIMEOUT=2m helm upgrade --install lensai deploy/helm/lensai \
   --timeout "${HELM_WAIT_TIMEOUT}" \
   --wait=false
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=lensai -n lensai --timeout=120s
-```
-
-Stack: Redis, Redpanda, ClickHouse, ingestion + consumer (1 replica each on M1; HPA off). Topics include `ai_anomalies` for G-09.
-
-**Full HPA / 2-replica demo (workstation only):** use `values-k3d.yaml` with `--wait --timeout 10m` — not recommended on M1.
-
-### 3) Verify
-
-```bash
 ./scripts/smoke-k8s-e2e.sh
 ```
 
-Port-forward is used inside the smoke script. HPA demo (k3d values only):
+**Full HPA demo (workstation only):** `values-k3d.yaml` with `--wait --timeout 10m` — not recommended on M1.
 
-```bash
-./scripts/demo-hpa-lag.sh
-```
-
-### k3d details
+### k3d artifacts
 
 | Artifact | Purpose |
 |----------|---------|
 | [`k3d/cluster.yaml`](k3d/cluster.yaml) | Single-server cluster, LB ports 8080 / 9091 |
-| [`helm/lensai/`](helm/lensai/) | Umbrella chart |
+| [`helm/lensai/`](helm/lensai/) | Umbrella chart + profile values |
 | [`docker/Dockerfile.ingestion`](docker/Dockerfile.ingestion) | Rust ingestion image |
 | [`docker/Dockerfile.consumer`](docker/Dockerfile.consumer) | Go consumer image |
 | [`tenant-limits.example.json`](tenant-limits.example.json) | Source for ConfigMap → `TENANT_LIMITS_PATH` |
 
-**HPA:** Consumer Deployment scales on **external** metric `kafka_consumer_lag_sum` (Prometheus adapter over `kafka_consumer_lag_events`). Ingestion stays at 2 replicas with PDB `maxUnavailable: 1` — lag is owned by consumers, not CPU theater.
+**HPA:** Consumer scales on external metric `kafka_consumer_lag_sum` (Prometheus adapter over `kafka_consumer_lag_events`).
 
 ### Troubleshooting (k3d)
 
 | Symptom | Check |
 |---------|--------|
-| Pods `ImagePullBackOff` | Run `./deploy/k3d/up.sh` (images must be imported; `pullPolicy: Never` in values-k3d) |
+| Pods `ImagePullBackOff` | Run `./deploy/k3d/up.sh` (`pullPolicy: Never` in M1/k3d values) |
 | OOM | Reduce Docker load or raise Docker memory to 8 GB+ |
-| HPA `<unknown>` | `kubectl logs -n lensai -l app.kubernetes.io/name=prometheus-adapter`; verify `kubectl get --raw /apis/external.metrics.k8s.io/v1beta1` |
+| HPA `<unknown>` | `kubectl logs -n lensai -l app.kubernetes.io/name=prometheus-adapter` |
 | Init job failed | `kubectl logs -n lensai job/lensai-redpanda-init` / `lensai-clickhouse-init` |
-| CH empty | Wait for consumer; `kubectl logs -n lensai -l app.kubernetes.io/component=consumer` |
+| CH empty | Wait for consumer; check consumer pod logs |
 
-### Manual verify (no k3d in CI)
+### Manual verify (no k3d)
 
 ```bash
 helm template lensai deploy/helm/lensai -f deploy/helm/lensai/values-m1.yaml > /tmp/lensai.yaml
