@@ -23,7 +23,7 @@ pub struct WalEntry {
 const DEFAULT_MAX_SEGMENT_BYTES: usize = 67_108_864; // 64 MiB
 
 fn segment_name(id: u64) -> String {
-    format!("segment_{:010}.wal", id)
+    format!("segment_{id:010}.wal")
 }
 
 fn parse_segment_id(name: &str) -> Option<u64> {
