@@ -725,7 +725,7 @@ dependencies = [
  "axum 0.8.9",
  "bytes",
  "lazy_static",
- "opentelemetry 0.22.0",
+ "opentelemetry 0.32.0",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "prometheus",
@@ -950,6 +950,7 @@ dependencies = [
  "js-sys",
  "pin-project-lite",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
