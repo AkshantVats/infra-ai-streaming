@@ -8,17 +8,17 @@ import (
 
 // M holds consumer Prometheus metrics.
 type M struct {
-	KafkaRecordsProcessed prometheus.Counter
-	ClickHouseWriteErrors prometheus.Counter
-	ClickHouseBatchSize   prometheus.Histogram
-	ClickHouseFlushDur    prometheus.Histogram
-	CircuitBreakerState   *prometheus.GaugeVec
-	RedisOverflowDepth    prometheus.Gauge
-	DLQEvents             prometheus.Counter
-	KafkaConsumerLagEvents        *prometheus.GaugeVec
-	KafkaDeserializationErrors    prometheus.Counter
-	KafkaRecordHandoffErrors      prometheus.Counter
-	AnomaliesDetectedTotal        *prometheus.CounterVec
+	KafkaRecordsProcessed      prometheus.Counter
+	ClickHouseWriteErrors      prometheus.Counter
+	ClickHouseBatchSize        prometheus.Histogram
+	ClickHouseFlushDur         prometheus.Histogram
+	CircuitBreakerState        *prometheus.GaugeVec
+	RedisOverflowDepth         prometheus.Gauge
+	DLQEvents                  prometheus.Counter
+	KafkaConsumerLagEvents     *prometheus.GaugeVec
+	KafkaDeserializationErrors prometheus.Counter
+	KafkaRecordHandoffErrors   prometheus.Counter
+	AnomaliesDetectedTotal     *prometheus.CounterVec
 }
 
 // New registers metrics with the default registry.
