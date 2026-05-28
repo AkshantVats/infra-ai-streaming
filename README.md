@@ -86,6 +86,49 @@ flowchart LR
 
 ---
 
+## Design decisions
+
+Three explicit tradeoffs — each with context, choice, and consequence — for reviewers who want more than a component list.
+
+| # | Decision | Why | Tradeoff |
+|---|----------|-----|----------|
+| **1** | **Rust for ingestion** | Bounded P99 on the validate → WAL → produce path; no GC pauses on the hot path | Slower iteration velocity for some teams vs. Go |
+| **2** | **ClickHouse over TimescaleDB** | OLAP-shaped rollups (`cost_usd`, tokens, P99 by `tenant_id × model_id`) at billions of rows without series-count limits | Not a general OLTP store; `FINAL` dedup cost on reads |
+| **3** | **AP at the ingest edge** | WAL + Kafka before ClickHouse visibility; 202 after durable accept; avoids blocking the inference critical path | Analytics are **eventually consistent**; at-least-once → warehouse dedup required |
+
+Full rationale: [DESIGN.md](DESIGN.md) §2 (CAP), §3 (partitioning), §5 (failure modes).
+
+---
+
+## Benchmarks
+
+Engineering targets: **1 M events/min**, ingest **P99 < 100 ms** (accept + WAL + enqueue boundary). Measured numbers come from k6 — see **[BENCHMARKS.md](BENCHMARKS.md)**.
+
+| Scenario | VUs | Events/sec (target) | HTTP P99 | CH flush P99 | Max Kafka lag | Error rate |
+|----------|-----|---------------------|----------|--------------|---------------|------------|
+| Steady   | 50  | ~5,000              | [TBD]    | [TBD]        | [TBD]         | [TBD]      |
+| Stress   | 200 | ~20,000             | [TBD]    | [TBD]        | [TBD]         | [TBD]      |
+
+> **Honest:** `[TBD]` until `k6 run load-test/k6-script.js` (script planned; `./chaos/run_chaos.sh load-10k` is a partial throughput signal). Full methodology and hardware context: [BENCHMARKS.md](BENCHMARKS.md).
+
+---
+
+## Chaos testing
+
+Five failure modes documented with local repro, metrics, and recovery in **[CHAOS.md](CHAOS.md)**. Automated scripts: `./chaos/run_chaos.sh` (`kill-redpanda`, `throttle-clickhouse`, `load-10k`).
+
+| # | Scenario | Ingest | Consumer | Data loss | Key metric |
+|---|----------|--------|----------|-----------|------------|
+| 1 | Kafka down | 202 (WAL) | Stalled | None (WAL replay) | `kafka_produce_errors_total` |
+| 2 | ClickHouse down | 202 | Breaker → Redis overflow | None (overflow/DLQ) | `circuit_breaker_state`, `redis_overflow_depth` |
+| 3 | Redis down | 202 **fail-open** | Normal | None (fairness lost) | `redis_rate_limit_degraded_total` |
+| 4 | Ingest OOM/kill | Down briefly | Normal | None (WAL replay) | `wal_replay_events_total` |
+| 5 | CH network partition | 202 | Breaker, lag grows | None (offsets replay) | `kafka_consumer_lag_events` |
+
+**Philosophy:** fail-open on Redis is intentional; at-least-once with warehouse dedup; every failure emits a Prometheus signal — see Grafana **Local E2E** dashboard.
+
+---
+
 ## Development
 
 **Local CI matrix** (matches GitHub Actions):
