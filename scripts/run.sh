@@ -138,7 +138,10 @@ case "$TARGET" in
     [[ "$SKIP_CHAOS" == "1" ]] && export SKIP_CHAOS=1
     [[ "$SKIP_DEPLOY" == "1" ]] && export SKIP_DEPLOY=1
     [[ "$SKIP_PREFLIGHT" == "1" ]] && export SKIP_PREFLIGHT=1
-    exec "${ROOT}/scripts/e2e-k3d-full.sh" "${EXTRA_ARGS[@]}"
+    if [[ "${#EXTRA_ARGS[@]}" -gt 0 ]]; then
+      exec "${ROOT}/scripts/e2e-k3d-full.sh" "${EXTRA_ARGS[@]}"
+    fi
+    exec "${ROOT}/scripts/e2e-k3d-full.sh"
     ;;
   compose)
     if [[ ! -f "$COMPOSE_ENV" ]]; then
@@ -152,13 +155,21 @@ case "$TARGET" in
     NS="${K8S_NAMESPACE:-lensai}"
     RELEASE="${HELM_RELEASE:-lensai}"
     helm dependency update "$HELM_CHART"
+    if [[ "${#EXTRA_ARGS[@]}" -gt 0 ]]; then
+      exec helm upgrade --install "$RELEASE" "$HELM_CHART" \
+        -n "$NS" --create-namespace \
+        -f "$HELM_VALUES" \
+        --timeout "${HELM_WAIT_TIMEOUT:-2m}" \
+        --wait=false \
+        --wait-for-jobs=false \
+        "${EXTRA_ARGS[@]}"
+    fi
     exec helm upgrade --install "$RELEASE" "$HELM_CHART" \
       -n "$NS" --create-namespace \
       -f "$HELM_VALUES" \
       --timeout "${HELM_WAIT_TIMEOUT:-2m}" \
       --wait=false \
-      --wait-for-jobs=false \
-      "${EXTRA_ARGS[@]}"
+      --wait-for-jobs=false
     ;;
   *)
     echo "Unknown target '${TARGET}'. Use k3d, compose, or helm." >&2
