@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Day 8 k8s smoke: assumes helm release "lensai" in namespace lensai.
+# k8s smoke: assumes helm release "lensai" in namespace lensai.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

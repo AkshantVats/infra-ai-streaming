@@ -1,4 +1,4 @@
-# k3d cluster for LensAI local Kubernetes (Day 8 / G-07).
+# k3d cluster for LensAI local Kubernetes.
 # Create: k3d cluster create lensai --config deploy/k3d/cluster.yaml
 apiVersion: k3d.io/v1alpha5
 kind: Simple

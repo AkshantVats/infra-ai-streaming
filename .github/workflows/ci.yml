@@ -68,6 +68,12 @@ jobs:
       - name: Helm template (values-m1.yaml)
         run: helm template lensai deploy/helm/lensai -n lensai -f deploy/helm/lensai/values-m1.yaml >/dev/null
 
+      - name: Helm template (values-dev.yaml)
+        run: helm template lensai deploy/helm/lensai -n lensai -f deploy/helm/lensai/values-dev.yaml >/dev/null
+
+      - name: bash -n run.sh
+        run: bash -n scripts/run.sh
+
   shell:
     runs-on: ubuntu-latest
     steps:

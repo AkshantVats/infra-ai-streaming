@@ -1,3 +1,4 @@
+// Package anomaly detects latency outliers for the ai_anomalies topic.
 package anomaly
 
 import (

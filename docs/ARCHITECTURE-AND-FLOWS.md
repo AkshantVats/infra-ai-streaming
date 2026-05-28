@@ -107,41 +107,25 @@ sequenceDiagram
 
 ## 2. Implementation status
 
-Milestones **G-01..G-05** map to the 7-day plan goals. **Days 0–6** are delivery slices.
+Feature completeness by component (all paths on `main` unless noted).
 
-| ID | Goal | Days | Status (feature branch) | Status (`main`) | Primary paths |
-|----|------|------|-------------------------|-----------------|---------------|
-| **G-01** | Rust HTTP ingestion (validate, rate limit, WAL, Kafka) | 2–3 | **Completed** | **Completed** | `ingestion/src/handlers/ingest.rs`, `wal/writer.rs`, `kafka/producer.rs` |
-| **G-02** | Local deploy stack (Compose, topics, DDL, Prometheus) | 4 | **Completed** | **Completed** | `deploy/docker-compose.yml`, `redpanda/init-topics.sh`, `clickhouse/init.sql` |
-| **G-03** | Go consumer → ClickHouse (batch, breaker, overflow, DLQ) | 5 | **Completed** | **Completed** | `consumer/internal/clickhouse/writer.go`, `kafka/reader.go` |
-| **G-04** | Local E2E Grafana dashboard | 5 | **Completed** | **Completed** | `deploy/grafana/.../ai-inference-e2e.json` (UID `ai-inference-e2e-local`) |
-| **G-05** | Product SLO dashboard + consumer lag metric | 6 | **Completed** | **Partial** (no product dashboard / lag on `main`) | `dashboards/ai-inference-product.json`, `consumer/internal/kafka/reader.go` |
-| **G-07** | Helm + k3d + consumer HPA on Kafka lag | 8 | **Completed** (feature branch) | Pending merge | `deploy/helm/lensai/`, `deploy/k3d/cluster.yaml` |
+| Feature | Status | Primary paths |
+|---------|--------|---------------|
+| Rust HTTP ingestion (validate, rate limit, WAL, Kafka) | **Completed** | `ingestion/src/handlers/ingest.rs`, `wal/writer.rs`, `kafka/producer.rs` |
+| Local deploy stack (Compose, topics, DDL, Prometheus) | **Completed** | `deploy/docker-compose.yml`, `redpanda/init-topics.sh`, `clickhouse/init.sql` |
+| Go consumer → ClickHouse (batch, breaker, overflow, DLQ) | **Completed** | `consumer/internal/clickhouse/writer.go`, `kafka/reader.go` |
+| Local E2E Grafana dashboard | **Completed** | `deploy/grafana/.../ai-inference-e2e.json` (UID `ai-inference-e2e-local`) |
+| Product SLO dashboard + consumer lag metric | **Completed** | `dashboards/ai-inference-product.json`, `consumer/internal/kafka/reader.go` |
+| Helm + k3d + consumer HPA on Kafka lag | **Completed** | `deploy/helm/lensai/`, `deploy/k3d/cluster.yaml` |
+| Z-score anomaly detection + `ai_anomalies` topic | **Completed** | `consumer/internal/anomaly/` |
 
-### Day-by-day snapshot
-
-| Day | Milestone | Status | Notes |
-|-----|-----------|--------|-------|
-| 0 | Repo bootstrap, CI skeleton | Done | `.github/workflows/ci.yml` |
-| 1 | DESIGN + README | Done | [DESIGN.md](../DESIGN.md) |
-| 2 | Ingestion library (config, WAL, rate limit tests) | Done | `ingestion/` crate |
-| 3 | Runnable Axum binary, Kafka producer | Done | `cargo run -p ingestion` |
-| 4 | Compose + consumer skeleton | Done | franz-go reader wired |
-| 5 | BatchWriter, breaker, overflow, DLQ, E2E dashboard | Done | `:9091` metrics |
-| 6 | Product SLO dashboard, lag gauge, docs polish | Done on `feat/grafana-inference-slo-dashboard` | CI still Rust-only in workflow |
-| 7 | Per-tenant rate limits, CHAOS.md | Done on `feat/per-tenant-rate-limits-chaos` | ConfigMap → `TENANT_LIMITS_PATH` |
-| 8 | Helm umbrella chart, k3d, consumer lag HPA | Done on `feat/helm-k3d-hpa` | Compose path unchanged |
-
-### Pending / backlog
+### Backlog
 
 | Item | Status |
 |------|--------|
 | `hash(tenant_id:model_id)` partition key | Pending |
-| Anomaly detection + `ai_anomalies` topic | Pending |
-| k6 load test in CI, BENCHMARKS.md numbers | Pending |
-| Helm / Kubernetes charts | **Done** (`deploy/helm/lensai/`, k3d in `deploy/README.md`) |
+| k6 load test in CI, published benchmark numbers | Pending |
 | OTLP export wired in compose | Partial (env stub only) |
-| `go test` in GitHub Actions | Pending (runs locally) |
 
 ---
 
@@ -172,10 +156,10 @@ Milestones **G-01..G-05** map to the 7-day plan goals. **Days 0–6** are delive
 | Circuit breaker | `internal/clickhouse/breaker.go` | — | 5 fail / 30s reset |
 | Overflow | `internal/redis/overflow.go` | 58+ | LPUSH / RPOP; updates `redis_overflow_depth` |
 | DLQ | `internal/kafka/dlq.go` | — | Per-event JSON to DLQ topic |
-| Metrics | `internal/metrics/metrics.go` | — | Day 5+6 metric set |
+| Metrics | `internal/metrics/metrics.go` | — | consumer metric set |
 | Metrics HTTP | `internal/metrics/server.go` | — | Default port **9091** |
 
-**Critical handoff path:** `reader.handleRecord` → `writer.Accept` (blocks on ticket) → `Flush` / `handoffEvents` → insert or overflow or DLQ → `signalTickets` → reader commits.
+**Critical handoff path:** `reader.handleRecord` → `writer.Accept` (blocks on handoff completion) → `Flush` / `handoffEvents` → insert or overflow or DLQ → `signalHandoffSignals` → reader commits.
 
 ### 3.3 Deploy (`deploy/`)
 
@@ -256,7 +240,7 @@ flowchart LR
 | **DLQ** | 3 insert failures | — | DLQ topic | Yes | `dlq_events_total` |
 | **Timeout (event field)** | `status: timeout` in JSON | 202 (valid) | CH row with status | Yes | CH panel P99 / status dimension |
 | **Duplicate** | Reconsume / replay | — | Second INSERT | Possible | Same `event_id` if client supplied; at-least-once |
-| **Partial batch** | Multi-event record | — | All-or-nothing per record ticket | Per record | `clickhouse_batch_size` |
+| **Partial batch** | Multi-event record | — | All-or-nothing per multi-event record | Per record | `clickhouse_batch_size` |
 | **Recovery** | Restart ingestion | WAL replay | Re-produce unacked | N/A | `wal_replay_events_total`, `wal_segments_pending` |
 | **Unexpected** | Panic / OOM | — | Undefined | Maybe stuck | `up{job=...}`, logs |
 

@@ -28,12 +28,10 @@ cargo run -p ingestion
 
 Grafana: http://localhost:3000/d/ai-inference-e2e-local (admin / admin).
 
-### Kubernetes (k3d / G-07)
+### Kubernetes (k3d)
 
 ```bash
-./deploy/k3d/up.sh
-helm dependency update deploy/helm/lensai
-helm upgrade --install lensai deploy/helm/lensai -n lensai --create-namespace -f deploy/helm/lensai/values-k3d.yaml --wait --timeout 10m
+./scripts/run.sh --profile k3d --target helm
 ./scripts/smoke-k8s-e2e.sh
 ```
 

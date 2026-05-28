@@ -52,7 +52,7 @@ jobs:
           BUILD_TIME: ${{ env.BUILD_TIME }}
           HELM_WAIT_TIMEOUT: 5m
           POD_WAIT_TIMEOUT: 300s
-        run: timeout 30m ./scripts/e2e-k3d-full.sh
+        run: timeout 30m ./scripts/run.sh --profile m1
 
       - name: Upload E2E proof snippet on failure
         if: failure()

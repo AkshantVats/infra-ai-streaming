@@ -1,3 +1,4 @@
+// Package metrics exposes Prometheus instrumentation for the consumer.
 package metrics
 
 import (
@@ -5,7 +6,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// M holds consumer Prometheus metrics (minimal Day 5 set).
+// M holds consumer Prometheus metrics.
 type M struct {
 	KafkaRecordsProcessed      prometheus.Counter
 	ClickHouseWriteErrors      prometheus.Counter

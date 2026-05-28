@@ -1,3 +1,4 @@
+// Package config loads consumer settings from environment variables.
 package config
 
 import (

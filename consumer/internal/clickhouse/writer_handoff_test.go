@@ -38,34 +38,34 @@ func sampleEvent() model.InferenceEvent {
 	}
 }
 
-func TestFinishTicketSignalsWhenRemainingZero(t *testing.T) {
-	w := &BatchWriter{tickets: make(map[uint64]*handoffTicket)}
+func TestFinishHandoffSignalWhenRemainingZero(t *testing.T) {
+	w := &BatchWriter{handoffSignals: make(map[uint64]*handoffSignal)}
 	done := make(chan struct{})
-	w.tickets[1] = &handoffTicket{remaining: 2, done: done}
-	w.finishTicket(1, 1)
+	w.handoffSignals[1] = &handoffSignal{remaining: 2, done: done}
+	w.finishHandoffSignal(1, 1)
 	select {
 	case <-done:
 		t.Fatal("done closed early")
 	default:
 	}
-	w.finishTicket(1, 1)
+	w.finishHandoffSignal(1, 1)
 	select {
 	case <-done:
 	default:
 		t.Fatal("done not closed")
 	}
-	if _, ok := w.tickets[1]; ok {
-		t.Fatal("ticket should be removed")
+	if _, ok := w.handoffSignals[1]; ok {
+		t.Fatal("handoff signal should be removed")
 	}
 }
 
 func TestHandoffEventsOverflowWhenBreakerOpen(t *testing.T) {
 	overflow := &mockOverflow{}
 	w := &BatchWriter{
-		cb:       NewCircuitBreaker(1, 30*time.Minute),
-		overflow: overflow,
-		m:        metrics.New(),
-		tickets:  make(map[uint64]*handoffTicket),
+		cb:             NewCircuitBreaker(1, 30*time.Minute),
+		overflow:       overflow,
+		m:              metrics.New(),
+		handoffSignals: make(map[uint64]*handoffSignal),
 	}
 	w.cb.RecordFailure()
 	events := []model.InferenceEvent{sampleEvent(), sampleEvent()}
@@ -79,7 +79,7 @@ func TestHandoffEventsOverflowWhenBreakerOpen(t *testing.T) {
 }
 
 func TestAcceptEmptyReturnsNil(t *testing.T) {
-	w := &BatchWriter{tickets: make(map[uint64]*handoffTicket)}
+	w := &BatchWriter{handoffSignals: make(map[uint64]*handoffSignal)}
 	if err := w.Accept(context.Background(), nil); err != nil {
 		t.Fatalf("Accept(nil): %v", err)
 	}

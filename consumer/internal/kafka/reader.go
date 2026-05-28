@@ -1,3 +1,4 @@
+// Package kafka reads inference batches from Kafka and publishes DLQ and anomaly records.
 package kafka
 
 import (

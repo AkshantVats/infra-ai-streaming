@@ -146,7 +146,7 @@
       "id": 4,
       "options": {
         "code": { "language": "plaintext", "showLineNumbers": false },
-        "content": "**Go consumer (Day 5):** batch writer → ClickHouse; circuit breaker + Redis overflow + DLQ. Metrics on `:9091/metrics`. Verify rows in ClickHouse panel below after `curl /ingest`.",
+        "content": "**Go consumer:** batch writer → ClickHouse; circuit breaker + Redis overflow + DLQ. Metrics on `:9091/metrics`. Verify rows in ClickHouse panel below after `curl /ingest`.",
         "mode": "markdown"
       },
       "title": "Consumer path",
