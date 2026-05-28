@@ -33,6 +33,8 @@ async fn health_handler() -> (StatusCode, Json<serde_json::Value>) {
 /// Build the ingestion HTTP router with concurrency, timeout, and tracing layers.
 pub fn build_router(state: AppState) -> Router {
     let max_concurrent = state.config.max_concurrent_requests;
+    #[allow(deprecated)]
+    let timeout_layer = TimeoutLayer::new(Duration::from_secs(30));
 
     Router::new()
         .route("/ingest", post(handle_ingest))
@@ -53,7 +55,7 @@ pub fn build_router(state: AppState) -> Router {
             }),
         )
         .layer(TraceLayer::new_for_http())
-        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        .layer(timeout_layer)
         .layer(ConcurrencyLimitLayer::new(max_concurrent))
         .with_state(state)
 }
