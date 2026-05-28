@@ -23,7 +23,7 @@ redis = { version = "0.25", features = ["tokio-comp", "script"] }
 prometheus = { version = "0.13", features = ["process"] }
 lazy_static = "1.5"
 opentelemetry = "0.22"
-opentelemetry-otlp = { version = "0.15", features = ["grpc-tonic"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
 opentelemetry_sdk = { version = "0.22", features = ["rt-tokio"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
