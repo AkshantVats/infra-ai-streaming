@@ -135,7 +135,7 @@ async fn ping_redis(config: &Config) -> anyhow::Result<()> {
         .await
         .context("Redis unreachable — is Redis running?")?;
     redis::cmd("PING")
-        .query_async::<_, String>(&mut conn)
+        .query_async::<String>(&mut conn)
         .await
         .context("Redis PING failed")?;
     tracing::info!("Redis connected");
