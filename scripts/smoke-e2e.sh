@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Day 5 E2E smoke: compose health, topics, tests, optional ingest → ClickHouse (ingestion + consumer must be running).
+# E2E smoke: compose health, topics, tests, optional ingest → ClickHouse (ingestion + consumer must be running).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -52,6 +52,7 @@ echo "==> Verifying Kafka topics"
 "${COMPOSE[@]}" exec -T redpanda rpk topic list | tee /tmp/rpk-topics.txt
 grep -q ai_inference_events /tmp/rpk-topics.txt
 grep -q ai_inference_dlq /tmp/rpk-topics.txt
+grep -q ai_anomalies /tmp/rpk-topics.txt
 
 echo "==> Unit tests (no compose required for Go)"
 cargo test -p ingestion

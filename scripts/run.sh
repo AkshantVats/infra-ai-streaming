@@ -23,6 +23,7 @@ CUSTOM_VALUES=""
 SKIP_CHAOS=0
 SKIP_DEPLOY=0
 SKIP_PREFLIGHT=0
+PREFLIGHT_EXPLICIT=0
 EXTRA_ARGS=()
 
 usage() {
@@ -36,7 +37,8 @@ Options:
   --target TARGET      k3d (default) | compose | helm
   --skip-chaos         Skip chaos steps in k3d E2E
   --skip-deploy        Skip cluster deploy (k3d E2E only)
-  --skip-preflight     Skip unit tests (k3d E2E only)
+  --skip-preflight     Skip host unit-test preflight (k3d E2E only)
+  --preflight          Force host unit-test preflight (k3d E2E only)
   -h, --help           Show this help
 
 Examples:
@@ -84,6 +86,15 @@ resolve_compose_env() {
   esac
 }
 
+exec_with_extra() {
+  local base=("$@")
+  if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+    exec "${base[@]}" "${EXTRA_ARGS[@]}"
+  else
+    exec "${base[@]}"
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)
@@ -108,6 +119,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-preflight)
       SKIP_PREFLIGHT=1
+      PREFLIGHT_EXPLICIT=1
+      shift
+      ;;
+    --preflight)
+      SKIP_PREFLIGHT=0
+      PREFLIGHT_EXPLICIT=1
       shift
       ;;
     -h|--help)
@@ -124,6 +141,11 @@ done
 HELM_VALUES="$(resolve_helm_values)"
 COMPOSE_ENV="$(resolve_compose_env)"
 
+# Docker-first M1 default: skip host-only preflight unless explicitly requested.
+if [[ "$TARGET" == "k3d" && "$PROFILE" == "m1" && "$PREFLIGHT_EXPLICIT" == "0" ]]; then
+  SKIP_PREFLIGHT=1
+fi
+
 export LENSAI_PROFILE="$PROFILE"
 export LENSAI_HELM_VALUES="$HELM_VALUES"
 export LENSAI_COMPOSE_ENV="$COMPOSE_ENV"
@@ -131,6 +153,7 @@ export LENSAI_COMPOSE_ENV="$COMPOSE_ENV"
 echo "[run] profile=${PROFILE} target=${TARGET}"
 echo "[run] helm values=${HELM_VALUES}"
 echo "[run] compose env=${COMPOSE_ENV}"
+echo "[run] skip preflight=${SKIP_PREFLIGHT}"
 
 case "$TARGET" in
   k3d)
@@ -138,7 +161,7 @@ case "$TARGET" in
     [[ "$SKIP_CHAOS" == "1" ]] && export SKIP_CHAOS=1
     [[ "$SKIP_DEPLOY" == "1" ]] && export SKIP_DEPLOY=1
     [[ "$SKIP_PREFLIGHT" == "1" ]] && export SKIP_PREFLIGHT=1
-    exec "${ROOT}/scripts/e2e-k3d-full.sh" "${EXTRA_ARGS[@]}"
+    exec_with_extra "${ROOT}/scripts/e2e-k3d-full.sh"
     ;;
   compose)
     if [[ ! -f "$COMPOSE_ENV" ]]; then
@@ -146,19 +169,18 @@ case "$TARGET" in
       echo "Copy deploy/.env.example to deploy/.env or add deploy/compose/values-${PROFILE}.env" >&2
       exit 1
     fi
-    exec docker compose --env-file "$COMPOSE_ENV" -f "$COMPOSE_FILE" up -d "${EXTRA_ARGS[@]}"
+    exec_with_extra docker compose --env-file "$COMPOSE_ENV" -f "$COMPOSE_FILE" up -d
     ;;
   helm)
     NS="${K8S_NAMESPACE:-lensai}"
     RELEASE="${HELM_RELEASE:-lensai}"
     helm dependency update "$HELM_CHART"
-    exec helm upgrade --install "$RELEASE" "$HELM_CHART" \
+    exec_with_extra helm upgrade --install "$RELEASE" "$HELM_CHART" \
       -n "$NS" --create-namespace \
       -f "$HELM_VALUES" \
       --timeout "${HELM_WAIT_TIMEOUT:-2m}" \
       --wait=false \
-      --wait-for-jobs=false \
-      "${EXTRA_ARGS[@]}"
+      --wait-for-jobs=false
     ;;
   *)
     echo "Unknown target '${TARGET}'. Use k3d, compose, or helm." >&2

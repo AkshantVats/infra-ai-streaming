@@ -54,8 +54,8 @@ func LoadFromEnv() Config {
 		DrainInterval:       envDurationOr("OVERFLOW_DRAIN_INTERVAL", 5*time.Second),
 		DrainBatchSize:      envIntOr("OVERFLOW_DRAIN_BATCH", 5000),
 
-		AnomalyZScoreThreshold: envFloatOr("ANOMALY_ZSCORE_THRESHOLD", 3.0),
-		AnomalyWindowSize:      envIntOr("ANOMALY_WINDOW_SIZE", 50),
+		AnomalyZScoreThreshold: envFloatOr("ANOMALY_Z_THRESHOLD", envFloatOr("ANOMALY_ZSCORE_THRESHOLD", 3.0)),
+		AnomalyWindowSize:      envIntOr("ANOMALY_WINDOW_SIZE", 100),
 		AnomalyMinSamples:      envIntOr("ANOMALY_MIN_SAMPLES", 20),
 	}
 }

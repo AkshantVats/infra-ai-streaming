@@ -41,6 +41,7 @@ Prometheus runs in Docker and scrapes the host via `host.docker.internal` (see `
 | `redis_overflow_depth` | Gauge | Redis LIST length (`REDIS_OVERFLOW_KEY`) |
 | `dlq_events_total` | Counter | Events published to `ai_inference_dlq` |
 | `kafka_consumer_lag_events{topic,partition,group}` | Gauge | High watermark minus committed offset (events) per partition |
+| `anomalies_detected_total{tenant_id,model_id}` | Counter | Inference latency z-score anomalies published to `ai_anomalies` |
 
 ## Circuit breaker
 

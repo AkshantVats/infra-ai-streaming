@@ -18,7 +18,7 @@ type M struct {
 	KafkaConsumerLagEvents     *prometheus.GaugeVec
 	KafkaDeserializationErrors prometheus.Counter
 	KafkaRecordHandoffErrors   prometheus.Counter
-	AnomaliesDetectedTotal     prometheus.Counter
+	AnomaliesDetectedTotal     *prometheus.CounterVec
 }
 
 // New registers metrics with the default registry.
@@ -66,10 +66,10 @@ func New() *M {
 			Name: "kafka_record_handoff_errors_total",
 			Help: "Kafka records where sink.Accept failed (offset not committed).",
 		}),
-		AnomaliesDetectedTotal: promauto.NewCounter(prometheus.CounterOpts{
+		AnomaliesDetectedTotal: promauto.NewCounterVec(prometheus.CounterOpts{
 			Name: "anomalies_detected_total",
 			Help: "Inference latency anomalies detected via z-score and published to ai_anomalies.",
-		}),
+		}, []string{"tenant_id", "model_id"}),
 	}
 }
 
