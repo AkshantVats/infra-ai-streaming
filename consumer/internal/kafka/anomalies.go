@@ -84,7 +84,9 @@ func (p *AnomalyPublisher) Publish(ctx context.Context, anomalies []*anomaly.Det
 		return fmt.Errorf("anomalies produce: %w", err)
 	}
 
-	p.m.AnomaliesDetectedTotal.Add(float64(len(anomalies)))
+	for _, a := range anomalies {
+		p.m.AnomaliesDetectedTotal.WithLabelValues(a.TenantID, a.ModelID).Inc()
+	}
 	return nil
 }
 

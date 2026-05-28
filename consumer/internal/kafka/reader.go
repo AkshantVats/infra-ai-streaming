@@ -158,7 +158,12 @@ func (r *Reader) handleRecord(ctx context.Context, rec *kgo.Record) error {
 		return err
 	}
 
-	// Detect and publish inference latency anomalies before handing off the batch.
+	if err := r.sink.Accept(ctx, batch.Events); err != nil {
+		return err
+	}
+
+	// Detect and publish inference latency anomalies after successful sink handoff.
+	// This side-effect should not block record commits if the anomaly path is unhealthy.
 	if r.detector != nil && r.anomalyPublisher != nil {
 		var detected []*anomaly.DetectedAnomaly
 		for i := range batch.Events {
@@ -167,13 +172,10 @@ func (r *Reader) handleRecord(ctx context.Context, rec *kgo.Record) error {
 			}
 		}
 		if err := r.anomalyPublisher.Publish(ctx, detected); err != nil {
-			return err
+			log.Printf("level=warn msg=anomaly_publish_failed count=%d err=%v", len(detected), err)
 		}
 	}
 
-	if err := r.sink.Accept(ctx, batch.Events); err != nil {
-		return err
-	}
 	r.m.KafkaRecordsProcessed.Add(float64(len(batch.Events)))
 	return nil
 }
