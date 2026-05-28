@@ -68,7 +68,15 @@ See [`deploy/README.md`](deploy/README.md) for ports, troubleshooting, and manua
 
 ## Architecture
 
-Ingestion is **AP-oriented**: accept and durably record quickly (WAL + Kafka), then make data **eventually consistent** in ClickHouse. The Go consumer batches writes, protects ClickHouse with a circuit breaker, and spills to Redis when the analytical path is degraded.
+Ingestion is **AP-oriented**: accept and durably record quickly (WAL + Kafka), then make data **eventually consistent** in ClickHouse. The Go consumer batches writes, protects ClickHouse with a circuit breaker, spills to Redis when the analytical path is degraded, and runs **z-score latency anomaly detection** per `tenant_id:model_id` pair (window 100, 3σ) — routing anomalies to the `ai_anomalies` Kafka topic.
+
+**Features:**
+- WAL-durable HTTP ingest (Rust/Axum) — P99 < 100 ms to accepted+WAL boundary
+- Per-tenant Redis token-bucket rate limits (fail-open on Redis loss)
+- Go batch consumer → ClickHouse with circuit breaker + Redis overflow + DLQ
+- **Latency anomalies:** z-score on `latency_ms` per `tenant_id:model_id` → `ai_anomalies` topic → `anomalies_detected_total{tenant_id,model_id}` — Grafana alert `consumer-latency-zscore-anomalies.yaml`
+- Prometheus metrics on `:8080` (ingestion) and `:9091` (consumer); Grafana Product SLO + Local E2E dashboards
+- Helm chart with HPA on consumer Kafka lag; k3d E2E proof in `docs/E2E-PROOF-K3D.md`
 
 → [Architecture (evergreen)](docs/ARCHITECTURE.md) · [Full flows & troubleshooting](docs/ARCHITECTURE-AND-FLOWS.md) · [Design decisions](DESIGN.md)
 
