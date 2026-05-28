@@ -32,7 +32,7 @@ jobs:
           go-version-file: consumer/go.mod
           cache-dependency-path: consumer/go.sum
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.16.0
 
