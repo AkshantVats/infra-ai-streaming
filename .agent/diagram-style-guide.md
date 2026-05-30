@@ -1,14 +1,15 @@
 # Diagram Style Guide
 
 Concise reference for all Mermaid diagrams used in blog posts on this project.
-Every diagram must follow these rules before pushing.
+Every diagram must follow these rules before pushing — the pre-push check
+enforces checks 2 and 3 automatically.
 
 ---
 
 ## Required Init Block
 
-Every mermaid code block **must** begin with this exact init block (the
-pre-push check enforces it):
+Every mermaid code block **must** begin with this exact init block as its
+first line. Copy it verbatim — do not reorder keys or change values.
 
 ~~~
 ```mermaid
@@ -31,8 +32,8 @@ pre-push check enforces it):
 ```
 ~~~
 
-The `"transparent"` background value renders correctly in both GitHub light
-and dark themes — do not replace it with a hex color.
+The `'background': 'transparent'` value renders correctly in both GitHub
+light and dark themes. Do not replace it with a hex color.
 
 ---
 
@@ -42,10 +43,11 @@ and dark themes — do not replace it with a hex color.
 |---|---|
 | Max words per label | 6 |
 | Max nodes per diagram | 8 |
-| Long labels | Use quoted strings for wrapping |
+| Long labels | Use quoted strings (`["label text"]`) to allow wrapping |
 
 Keep labels short so diagrams stay readable at blog widths. If a concept
-needs more text, add a caption below the diagram instead.
+needs more explanation, add a prose caption below the diagram rather than
+cramming text into the node.
 
 ---
 
@@ -53,9 +55,8 @@ needs more text, add a caption below the diagram instead.
 
 **`flowchart LR`** — system flows and data pipelines
 
-Use when you need to show data moving left-to-right through components:
-ingestion, processing, output. The horizontal layout matches how readers
-scan a pipeline.
+Use when data moves left-to-right through components: ingestion, processing,
+output. The horizontal layout mirrors how engineers read pipelines.
 
 **`sequenceDiagram`** — request/response interactions
 
@@ -67,20 +68,20 @@ timing and turn-taking explicit.
 
 Use when a parent-child or dependency relationship drives the diagram:
 service trees, config inheritance, taxonomy breakdowns. Top-down layout
-reflects the hierarchy naturally.
+reflects hierarchy naturally.
 
 ---
 
 ## Color Palette Reference
 
-| Role | Hex | Usage |
+| Role | Hex | Used for |
 |---|---|---|
-| Primary blue | `#4a90d9` | Borders, lines, edge labels |
+| Primary blue | `#4a90d9` | Borders, lines, edge label backgrounds |
 | Dark background | `#0d2137` | Node fills, cluster backgrounds |
-| Deepest background | `#0a1a2e` | Tertiary / nested backgrounds |
+| Deepest background | `#0a1a2e` | Tertiary / deeply nested backgrounds |
 | Node fill (primary) | `#1e3a5f` | Main nodes |
 | Text | `#f0f4f8` | All label and title text |
-| Canvas | `transparent` | Outer background |
+| Canvas | `transparent` | Outer diagram background |
 
 ---
 
@@ -89,40 +90,50 @@ reflects the hierarchy naturally.
 ### flowchart LR node
 
 ```
-# BAD — label is too long (8 words) and unquoted
+# BAD — label is 8 words and unquoted
 A[Ingest streaming data from Kafka topic partition]
 
-# GOOD — label trimmed to 6 words, quoted for safety
+# GOOD — trimmed to 6 words, quoted for safe wrapping
 A["Ingest from Kafka partition"]
 ```
 
 ### sequenceDiagram participant
 
 ```
-# BAD — participant name reads like a sentence
+# BAD — participant alias reads like a full sentence
 participant StreamProcessingWorkerService
 
-# GOOD — short, readable name
+# GOOD — short, scannable alias
 participant Worker
 ```
 
-### graph TD node with shape
+### graph TD decision node
 
 ```
 # BAD — curly-brace label has 7 words
 D{Should we retry the failed request now?}
 
-# GOOD — decision label is a tight question
+# GOOD — tight question, quoted, within limit
 D{"Retry failed request?"}
 ```
 
 ---
 
+## Transparent Background Note
+
+`'background': 'transparent'` tells Mermaid to leave the canvas color unset,
+so the diagram inherits whatever background the page applies. On GitHub this
+means white in light mode and dark gray in dark mode — both are readable with
+the dark-blue node fills defined above. Replacing `transparent` with a fixed
+hex value will break one of the two themes.
+
+---
+
 ## Quick Checklist Before Pushing
 
-- [ ] Init block is the first line inside every ` ```mermaid ` fence
+- [ ] Init block is the **first line** inside every ` ```mermaid ` fence
 - [ ] No label exceeds 6 words
 - [ ] Diagram has 8 nodes or fewer
 - [ ] Diagram type matches the content (LR flow / sequence / TD hierarchy)
-- [ ] Background is set to `"transparent"`, not a hex value
+- [ ] Background is `'transparent'`, not a hex value
 - [ ] `pre-push-check.sh` reports PASS for Check 2 and Check 3
