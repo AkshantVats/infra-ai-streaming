@@ -49,6 +49,24 @@ non_code_lines() {
 }
 
 # ---------------------------------------------------------------------------
+# Regex patterns stored in variables so bash [[ =~ ]] handles them correctly
+# ---------------------------------------------------------------------------
+RE_MD_LINK='\[([^]]*)\]\(([^)]+)\)'   # [text](url)
+RE_MERMAID_OPEN='^```mermaid'
+RE_FENCE_CLOSE='^```$'
+RE_NODE_CHARS='[][(){}]'
+RE_HTTP_STATUS='^[45]'
+RE_COVER_TAG='!\[cover\]\(([^)]+)\)'
+
+# Label extraction patterns (stored to avoid inline capture-group quoting issues)
+RE_LBL_BRACKET_Q='\["([^"]+)"\]'
+RE_LBL_BRACKET='\[([^]]+)\]'
+RE_LBL_PAREN_Q='\("([^"]+)"\)'
+RE_LBL_PAREN='\(([^)]+)\)'
+RE_LBL_BRACE_Q='\{"([^"]+)"\}'
+RE_LBL_BRACE='\{([^}]+)\}'
+
+# ---------------------------------------------------------------------------
 # CHECK 1: Link check
 # For each [text](url) in non-code sections, curl http/https URLs.
 # Skip relative URLs and anchor-only links (#...).
@@ -60,11 +78,12 @@ echo "=== CHECK 1: Link check ==="
 LINK_FAILS=0
 
 while IFS=$'\t' read -r lineno line; do
-  # Iterate over all markdown links on this line
-  while [[ "$line" =~ \[[^]]*\]\(([^)]+)\) ]]; do
-    url="${BASH_REMATCH[1]}"
-    # Advance past the matched link so the next iteration finds the next one
-    line="${line#*"${BASH_REMATCH[0]}"}"
+  # Use grep to pull out all raw URLs from [text](url) patterns on this line
+  # We extract the URL portion (group 2) using sed for portability
+  urls=$(printf '%s' "$line" | grep -oE '\[[^]]*\]\([^)]+\)' | sed 's/.*](\(.*\))/\1/' || true)
+
+  while IFS= read -r url; do
+    [[ -z "$url" ]] && continue
 
     # Skip anchor-only links
     [[ "$url" == \#* ]] && continue
@@ -75,13 +94,13 @@ while IFS=$'\t' read -r lineno line; do
     http_code=$(curl --head --silent --max-time 5 --location \
       --write-out "%{http_code}" --output /dev/null "$url" 2>/dev/null || echo "000")
 
-    if [[ "$http_code" =~ ^[45] ]]; then
+    if [[ "$http_code" =~ $RE_HTTP_STATUS ]]; then
       fail_hard "Line $lineno: HTTP $http_code → $url"
       (( LINK_FAILS++ )) || true
     else
       pass "Line $lineno: HTTP $http_code → $url"
     fi
-  done
+  done <<< "$urls"
 done < <(non_code_lines)
 
 if [[ $LINK_FAILS -eq 0 ]]; then
@@ -105,31 +124,31 @@ file_lineno=0
 while IFS= read -r line || [[ -n "$line" ]]; do
   (( file_lineno++ )) || file_lineno=1
 
-  if [[ "$line" =~ ^\`\`\`mermaid ]]; then
+  if [[ "$line" =~ $RE_MERMAID_OPEN ]]; then
     in_mermaid=1
     mermaid_start=$file_lineno
     mermaid_body=()
     continue
   fi
 
-  if [[ $in_mermaid -eq 1 && "$line" =~ ^\`\`\`$ ]]; then
+  if [[ $in_mermaid -eq 1 && "$line" =~ $RE_FENCE_CLOSE ]]; then
     in_mermaid=0
     body_lineno=0
-    for body_line in "${mermaid_body[@]}"; do
+    for body_line in "${mermaid_body[@]+"${mermaid_body[@]}"}"; do
       (( body_lineno++ )) || true
       actual_lineno=$(( mermaid_start + body_lineno ))
 
       # Only inspect lines that look like node definitions
-      if [[ "$body_line" =~ [\[\(\{] ]]; then
+      if [[ "$body_line" =~ $RE_NODE_CHARS ]]; then
         label=""
 
-        # Try to extract label text in order of specificity (quoted first)
-        if   [[ "$body_line" =~ \[\"([^\"]+)\"\] ]];  then label="${BASH_REMATCH[1]}"
-        elif [[ "$body_line" =~ \[([^\]]+)\] ]];       then label="${BASH_REMATCH[1]}"
-        elif [[ "$body_line" =~ \(\"([^\"]+)\"\) ]];   then label="${BASH_REMATCH[1]}"
-        elif [[ "$body_line" =~ \(([^\)]+)\) ]];       then label="${BASH_REMATCH[1]}"
-        elif [[ "$body_line" =~ \{\"([^\"]+)\"\} ]];   then label="${BASH_REMATCH[1]}"
-        elif [[ "$body_line" =~ \{([^\}]+)\} ]];       then label="${BASH_REMATCH[1]}"
+        # Try to extract label text (quoted forms first, then unquoted)
+        if   [[ "$body_line" =~ $RE_LBL_BRACKET_Q ]]; then label="${BASH_REMATCH[1]}"
+        elif [[ "$body_line" =~ $RE_LBL_BRACKET ]];   then label="${BASH_REMATCH[1]}"
+        elif [[ "$body_line" =~ $RE_LBL_PAREN_Q ]];   then label="${BASH_REMATCH[1]}"
+        elif [[ "$body_line" =~ $RE_LBL_PAREN ]];     then label="${BASH_REMATCH[1]}"
+        elif [[ "$body_line" =~ $RE_LBL_BRACE_Q ]];   then label="${BASH_REMATCH[1]}"
+        elif [[ "$body_line" =~ $RE_LBL_BRACE ]];     then label="${BASH_REMATCH[1]}"
         fi
 
         if [[ -n "$label" ]]; then
@@ -169,14 +188,14 @@ file_lineno=0
 while IFS= read -r line || [[ -n "$line" ]]; do
   (( file_lineno++ )) || file_lineno=1
 
-  if [[ "$line" =~ ^\`\`\`mermaid ]]; then
+  if [[ "$line" =~ $RE_MERMAID_OPEN ]]; then
     in_mermaid=1
     mermaid_start=$file_lineno
     first_content_line=""
     continue
   fi
 
-  if [[ $in_mermaid -eq 1 && "$line" =~ ^\`\`\`$ ]]; then
+  if [[ $in_mermaid -eq 1 && "$line" =~ $RE_FENCE_CLOSE ]]; then
     in_mermaid=0
     if [[ -z "$first_content_line" || "$first_content_line" != "%%{init:"* ]]; then
       fail_soft "Mermaid block at line $mermaid_start: first line is not '%%{init:' (got: \"$first_content_line\")"
@@ -228,8 +247,8 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   if [[ -z "$line" ]]; then
     if [[ -n "$current_para" ]]; then
       (( para_index++ )) || true
-      # Count sentence boundaries: ". " "! " "? " plus a sentence-ending char at EOL
-      sentence_count=$(printf '%s' "$current_para" | grep -oE '\. +|\! +|\? +|[.!?]$' | wc -l)
+      # Count sentence boundaries: ". " "! " "? " and sentence-ending char at EOL
+      sentence_count=$(printf '%s' "$current_para" | { grep -oE '\. +|\! +|\? +|[.!?]$' || true; } | wc -l)
       if (( sentence_count > 3 )); then
         snippet="${current_para:0:80}"
         fail_soft "Paragraph $para_index: $sentence_count sentences (max 3). Starts: \"$snippet...\""
@@ -249,7 +268,7 @@ done <<< "$file_body"
 # Handle final paragraph with no trailing blank line
 if [[ -n "$current_para" ]]; then
   (( para_index++ )) || true
-  sentence_count=$(printf '%s' "$current_para" | grep -oE '\. +|\! +|\? +|[.!?]$' | wc -l)
+  sentence_count=$(printf '%s' "$current_para" | { grep -oE '\. +|\! +|\? +|[.!?]$' || true; } | wc -l)
   if (( sentence_count > 3 )); then
     snippet="${current_para:0:80}"
     fail_soft "Paragraph $para_index: $sentence_count sentences (max 3). Starts: \"$snippet...\""
@@ -270,17 +289,18 @@ echo ""
 echo "=== CHECK 5: Placeholder links ==="
 
 PLACEHOLDER_FAILS=0
+RE_PLACEHOLDER='example\.com|TODO|placeholder|localhost'
 
 while IFS=$'\t' read -r lineno line; do
-  while [[ "$line" =~ \[[^]]*\]\(([^)]+)\) ]]; do
-    url="${BASH_REMATCH[1]}"
-    line="${line#*"${BASH_REMATCH[0]}"}"
+  urls=$(printf '%s' "$line" | grep -oE '\[[^]]*\]\([^)]+\)' | sed 's/.*](\(.*\))/\1/' || true)
 
-    if [[ "$url" =~ example\.com|TODO|placeholder|localhost ]]; then
+  while IFS= read -r url; do
+    [[ -z "$url" ]] && continue
+    if [[ "$url" =~ $RE_PLACEHOLDER ]]; then
       fail_hard "Line $lineno: placeholder URL → $url"
       (( PLACEHOLDER_FAILS++ )) || true
     fi
-  done
+  done <<< "$urls"
 done < <(non_code_lines)
 
 if [[ $PLACEHOLDER_FAILS -eq 0 ]]; then
@@ -303,7 +323,7 @@ else
   lineno_cover="${cover_line%%:*}"
   cover_text="${cover_line#*:}"
 
-  if [[ "$cover_text" =~ !\[cover\]\(([^)]+)\) ]]; then
+  if [[ "$cover_text" =~ $RE_COVER_TAG ]]; then
     cover_path="${BASH_REMATCH[1]}"
 
     if [[ "$cover_path" == http://* || "$cover_path" == https://* ]]; then
