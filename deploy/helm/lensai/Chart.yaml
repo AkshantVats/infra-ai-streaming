@@ -4,6 +4,7 @@ description: LensAI full stack — Redis, Redpanda, ClickHouse, ingestion, consu
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+icon: https://raw.githubusercontent.com/cncf/artwork/main/projects/prometheus/icon/color/prometheus-icon-color.png
 dependencies:
   - name: prometheus-adapter
     version: 4.11.0

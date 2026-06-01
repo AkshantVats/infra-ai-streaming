@@ -120,9 +120,9 @@
 
 ---
 
-## Appendix — Implementation notes (Day 3)
+## Appendix — Implementation status (ingestion)
 
-The `ingestion` binary implements §2–§4 at a first milestone:
+The `ingestion` binary implements §2–§4:
 
 - **HTTP:** `POST /ingest` returns **202 Accepted** after WAL append + successful enqueue to a bounded `tokio::sync::mpsc` channel; channel full → **503** with `Retry-After`.
 - **WAL:** Segment files under `WAL_DIR`; `replay_unacked` on startup; `mark_acked` after Kafka delivery confirmation.
@@ -131,13 +131,13 @@ The `ingestion` binary implements §2–§4 at a first milestone:
 
 **Still out of scope in-tree:** EKS Terraform, Grafana in k8s, anomaly detector, OTLP wiring. **In tree:** local Helm chart + k3d (`deploy/README.md`).
 
-## Appendix — Day 4 milestone (Go consumer skeleton)
+## Appendix — Go consumer skeleton
 
 - **Consumer group (local dev):** `ai-inference-consumer-dev` (`KAFKA_GROUP_ID` in `deploy/.env.example`). Production name TBD (`ai-inference-consumer-v1`).
 - **Kafka message envelope:** each record is JSON `{"events":[<InferenceEvent>, ...]}` — matches `ingestion/src/kafka/producer.rs`.
 - **Partition key gap:** producer keys by **`tenant_id` only** today; DESIGN §3 target `hash(tenant_id:model_id)` is **not** implemented yet (tracked as open item).
 
-## Appendix — Day 5 milestone (ClickHouse writer)
+## Appendix — ClickHouse writer
 
 - **BatchWriter:** flush at **1000** events or **500ms**; maps columns to `deploy/clickhouse/init.sql` (`infra_ai.inference_events`).
 - **Circuit breaker:** **5** failures → open; **30s** → half-open; **1** success → closed. When open, batches go to **Redis LIST** overflow (`REDIS_OVERFLOW_KEY`).
@@ -146,7 +146,7 @@ The `ingestion` binary implements §2–§4 at a first milestone:
 - **Offsets:** commit only after CH insert, overflow push, or DLQ handoff for all events in the Kafka record.
 - **Metrics:** consumer HTTP **`METRICS_PORT` (default 9091)** — `clickhouse_*`, `circuit_breaker_state`, `redis_overflow_depth`, `dlq_events_total`. See [OBSERVABILITY.md](OBSERVABILITY.md).
 
-## Appendix — Day 7 milestone (per-tenant rate limits + CHAOS.md)
+## Appendix — Per-tenant rate limits and chaos docs
 
 - **Per-tenant config:** `TENANT_LIMITS_PATH` env var points to a JSON file (`deploy/tenant-limits.example.json`). Each tenant can have its own `max_events_per_sec` and `burst_multiplier`; unknown tenants fall back to the file's `"default"` block (or env-level `RATE_LIMIT_DEFAULT_RPS` if no file is set).
 - **Lua script:** receives per-tenant `rps`/`burst` as ARGV — the script itself is unchanged; the Rust caller resolves limits before invocation.

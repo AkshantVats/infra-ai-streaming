@@ -62,4 +62,4 @@ At scale, `tenant_id × model_id × status` multiplies series cardinality; cost 
 
 | Date | Change |
 |------|--------|
-| 2026-05-28 | Initial scaffold (Week 2, Day 13) |
+| 2026-05-28 | Initial benchmark scaffold |

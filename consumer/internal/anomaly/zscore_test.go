@@ -105,3 +105,125 @@ func TestZScoreLatencyDetector_IsolatedPerTenantAndModel(t *testing.T) {
 		t.Fatal("expected anomaly for m1")
 	}
 }
+
+// TestZScoreLatencyDetector_NegativeZScoreNotFlagged verifies that a latency
+// well below the mean (negative z-score) is never reported as an anomaly.
+func TestZScoreLatencyDetector_NegativeZScoreNotFlagged(t *testing.T) {
+	d := NewZScoreLatencyDetector(2.0, 5, 5)
+	for i := 0; i < 5; i++ {
+		d.ObserveEvent(ev("t1", "m1", 200, uint64(i)))
+	}
+	// Latency of 1ms is far below the mean of 200ms; z-score is large and negative.
+	if d.ObserveEvent(ev("t1", "m1", 1, 5)) != nil {
+		t.Fatal("unexpectedly flagged a latency far below the mean")
+	}
+}
+
+// TestZScoreLatencyDetector_RollingWindowEviction verifies that after filling
+// a window of size 3, old samples are evicted and anomaly detection uses only
+// the current window.
+func TestZScoreLatencyDetector_RollingWindowEviction(t *testing.T) {
+	// Window size 3, min samples 3.
+	d := NewZScoreLatencyDetector(2.0, 3, 3)
+
+	// Fill: {1000, 1001, 999} → mean≈1000, very small std.
+	d.ObserveEvent(ev("t1", "m1", 1000, 0))
+	d.ObserveEvent(ev("t1", "m1", 1001, 1))
+	d.ObserveEvent(ev("t1", "m1", 999, 2))
+
+	// Evict 1000, add 1000 → window {1001, 999, 1000}, still near 1000.
+	// Then add another near-1000 — no anomaly expected.
+	if d.ObserveEvent(ev("t1", "m1", 1000, 3)) != nil {
+		t.Fatal("unexpected anomaly while rolling near-baseline samples")
+	}
+}
+
+// TestZScoreLatencyDetector_AnomalyFieldsPopulated verifies that all fields
+// of DetectedAnomaly are correctly populated when an anomaly is detected.
+func TestZScoreLatencyDetector_AnomalyFieldsPopulated(t *testing.T) {
+	// Use a varied window so std > 0, enabling z-score computation.
+	// {100, 102, 98, 101, 99} → mean=100, std=sqrt(2) ≈ 1.414
+	d := NewZScoreLatencyDetector(2.0, 5, 5)
+	latencies := []uint32{100, 102, 98, 101, 99}
+	for i, l := range latencies {
+		d.ObserveEvent(ev("t1", "m1", l, uint64(i)))
+	}
+	// z-score for 130 is (130-100)/sqrt(2) ≈ 21.2, well above threshold 2.0.
+	evID := "my-event-id"
+	a := d.ObserveEvent(model.InferenceEvent{
+		TenantID:        "t1",
+		ModelID:         "m1",
+		EventID:         &evID,
+		TimestampUnixMs: 99,
+		LatencyMs:       130,
+	})
+	if a == nil {
+		t.Fatal("expected anomaly")
+	}
+	if a.TenantID != "t1" {
+		t.Errorf("TenantID = %q", a.TenantID)
+	}
+	if a.ModelID != "m1" {
+		t.Errorf("ModelID = %q", a.ModelID)
+	}
+	if a.EventID == nil || *a.EventID != evID {
+		t.Errorf("EventID = %v", a.EventID)
+	}
+	if a.TimestampUnixMs != 99 {
+		t.Errorf("TimestampUnixMs = %d", a.TimestampUnixMs)
+	}
+	if a.LatencyMs != 130 {
+		t.Errorf("LatencyMs = %d", a.LatencyMs)
+	}
+	if a.ZScore <= 0 {
+		t.Errorf("ZScore = %f, want > 0", a.ZScore)
+	}
+}
+
+// TestZScoreLatencyDetector_ConstructorClamping verifies that invalid
+// constructor arguments are clamped to safe minimums.
+func TestZScoreLatencyDetector_ConstructorClamping(t *testing.T) {
+	// windowSize < 2 → clamped to 2
+	// minSamples < 2 → clamped to 2
+	// threshold <= 0 → clamped to 3.0
+	d := NewZScoreLatencyDetector(0, 1, 1)
+	if d.windowSize != 2 {
+		t.Errorf("windowSize = %d, want 2 after clamping", d.windowSize)
+	}
+	if d.minSamples != 2 {
+		t.Errorf("minSamples = %d, want 2 after clamping", d.minSamples)
+	}
+	if d.threshold != 3.0 {
+		t.Errorf("threshold = %f, want 3.0 after clamping", d.threshold)
+	}
+}
+
+// TestZScoreLatencyDetector_MinSamplesClampedToWindowSize verifies that if
+// minSamples > windowSize, minSamples is clamped down to windowSize.
+func TestZScoreLatencyDetector_MinSamplesClampedToWindowSize(t *testing.T) {
+	d := NewZScoreLatencyDetector(2.0, 5, 10)
+	if d.minSamples != d.windowSize {
+		t.Errorf("minSamples = %d, want %d (== windowSize)", d.minSamples, d.windowSize)
+	}
+}
+
+// TestZScoreLatencyDetector_ThresholdInclusive verifies z >= threshold triggers an anomaly.
+func TestZScoreLatencyDetector_ThresholdInclusive(t *testing.T) {
+	d := NewZScoreLatencyDetector(2.0, 5, 5)
+	latencies := []uint32{100, 102, 98, 101, 99}
+	for i, l := range latencies {
+		d.ObserveEvent(ev("t1", "m1", l, uint64(i)))
+	}
+	// z for 102 vs mean=100, std=sqrt(2) is sqrt(2) < 2.0 — below threshold.
+	if a := d.ObserveEvent(ev("t1", "m1", 102, 5)); a != nil {
+		t.Fatalf("z=%.4f unexpectedly flagged (threshold 2.0)", a.ZScore)
+	}
+	// 130 is far above mean — z >> 2.0 (same window as AnomalyFieldsPopulated).
+	a := d.ObserveEvent(ev("t1", "m1", 130, 6))
+	if a == nil {
+		t.Fatal("expected anomaly at z >= threshold")
+	}
+	if a.ZScore < 2.0 {
+		t.Fatalf("ZScore = %.4f, want >= 2.0", a.ZScore)
+	}
+}

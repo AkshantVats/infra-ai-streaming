@@ -1,5 +1,5 @@
 -- Applied by the `clickhouse-init` service in `deploy/docker-compose.yml`
--- (`clickhouse-client --multiquery < /init.sql`). Full InferenceEvent schema for Day 5 writer.
+-- (`clickhouse-client --multiquery < /init.sql`). InferenceEvent schema for the Go batch writer.
 CREATE DATABASE IF NOT EXISTS infra_ai;
 
 DROP TABLE IF EXISTS infra_ai.inference_events;

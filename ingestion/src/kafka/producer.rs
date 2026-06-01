@@ -157,16 +157,16 @@ mod tests {
     fn producer_client_config_sets_expected_options() {
         let cfg = producer_client_config("broker1:9092,broker2:9092");
         assert_eq!(
-            cfg.get("bootstrap.servers").as_deref(),
+            cfg.get("bootstrap.servers"),
             Some("broker1:9092,broker2:9092")
         );
-        assert_eq!(cfg.get("message.timeout.ms").as_deref(), Some("5000"));
-        assert_eq!(cfg.get("enable.idempotence").as_deref(), Some("true"));
-        assert_eq!(cfg.get("acks").as_deref(), Some("all"));
-        assert_eq!(cfg.get("compression.type").as_deref(), Some("lz4"));
-        assert_eq!(cfg.get("batch.size").as_deref(), Some("1048576"));
-        assert_eq!(cfg.get("linger.ms").as_deref(), Some("5"));
-        assert_eq!(cfg.get("retries").as_deref(), Some("3"));
+        assert_eq!(cfg.get("message.timeout.ms"), Some("5000"));
+        assert_eq!(cfg.get("enable.idempotence"), Some("true"));
+        assert_eq!(cfg.get("acks"), Some("all"));
+        assert_eq!(cfg.get("compression.type"), Some("lz4"));
+        assert_eq!(cfg.get("batch.size"), Some("1048576"));
+        assert_eq!(cfg.get("linger.ms"), Some("5"));
+        assert_eq!(cfg.get("retries"), Some("3"));
     }
 
     #[test]

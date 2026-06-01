@@ -4,9 +4,59 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=scripts/lib/k8s-local-ports.sh
+source "${ROOT}/scripts/lib/k8s-local-ports.sh"
+ensure_k8s_smoke_ports
 
 NS="${K8S_NAMESPACE:-lensai}"
 RELEASE="${HELM_RELEASE:-lensai}"
+INGEST_BASE="${INGEST_URL}"
+CONSUMER_BASE="http://localhost:${SMOKE_CON_LOCAL_PORT}"
+CURL_RETRIES="${SMOKE_CURL_RETRIES:-12}"
+CURL_INTERVAL="${SMOKE_CURL_INTERVAL_SEC:-2}"
+PF_WARMUP_SEC="${SMOKE_PF_WARMUP_SEC:-5}"
+CH_WAIT_SEC="${SMOKE_CH_WAIT_SEC:-60}"
+
+wait_http() {
+  local url="$1"
+  local desc="$2"
+  local attempt=1
+  while (( attempt <= CURL_RETRIES )); do
+    if curl -sf --connect-timeout 3 --max-time 10 "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "    ${desc}: not ready (${attempt}/${CURL_RETRIES}), retry in ${CURL_INTERVAL}s"
+    sleep "$CURL_INTERVAL"
+    attempt=$((attempt + 1))
+  done
+  echo "FAIL: ${desc} unreachable at ${url}" >&2
+  return 22
+}
+
+curl_post_ingest() {
+  local ts_ms="$1"
+  local attempt=1
+  local code
+  while (( attempt <= CURL_RETRIES )); do
+    code="$(curl -sS --connect-timeout 3 --max-time 15 -o /tmp/ingest-body.txt -w '%{http_code}' \
+      -X POST "${INGEST_BASE}/ingest" \
+      -H 'Content-Type: application/json' \
+      -H 'X-Tenant-ID: demo' \
+      -d "{\"events\":[{\"tenant_id\":\"demo\",\"model_id\":\"gpt-4o\",\"timestamp_unix_ms\":${ts_ms},\"latency_ms\":100,\"prompt_tokens\":10,\"completion_tokens\":5,\"cost_usd\":0.01,\"status\":\"success\"}]}")" || code="000"
+    if [[ "$code" == "202" ]]; then
+      echo "HTTP ${code} — $(cat /tmp/ingest-body.txt)"
+      return 0
+    fi
+    echo "    POST /ingest returned ${code} (${attempt}/${CURL_RETRIES})"
+    sleep "$CURL_INTERVAL"
+    attempt=$((attempt + 1))
+  done
+  echo "FAIL: expected HTTP 202, got ${code:-unknown}" >&2
+  if [[ -f /tmp/ingest-body.txt ]]; then
+    cat /tmp/ingest-body.txt >&2
+  fi
+  return 1
+}
 
 echo "==> Waiting for pods in namespace ${NS}"
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance="${RELEASE}" -n "${NS}" --timeout=300s 2>/dev/null || true
@@ -32,44 +82,51 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> Port-forward ingestion :8080 and consumer metrics :9091"
-kubectl port-forward -n "${NS}" svc/ingestion 8080:8080 >/tmp/pf-ing.log 2>&1 &
+echo "==> Port-forward ingestion localhost:${SMOKE_ING_LOCAL_PORT} and consumer localhost:${SMOKE_CON_LOCAL_PORT}"
+kubectl port-forward -n "${NS}" svc/ingestion "${SMOKE_ING_LOCAL_PORT}:8080" >/tmp/pf-ing.log 2>&1 &
 PF_ING=$!
-kubectl port-forward -n "${NS}" svc/consumer 9091:9091 >/tmp/pf-con.log 2>&1 &
+kubectl port-forward -n "${NS}" svc/consumer "${SMOKE_CON_LOCAL_PORT}:9091" >/tmp/pf-con.log 2>&1 &
 PF_CON=$!
-sleep 3
+sleep "$PF_WARMUP_SEC"
+if ! port_is_listening "${SMOKE_ING_LOCAL_PORT}" || ! port_is_listening "${SMOKE_CON_LOCAL_PORT}"; then
+  echo "FAIL: port-forward did not bind (see /tmp/pf-ing.log, /tmp/pf-con.log)" >&2
+  cat /tmp/pf-ing.log /tmp/pf-con.log >&2 2>/dev/null || true
+  exit 1
+fi
 
 echo "==> Health checks"
-curl -sf http://localhost:8080/health | head -c 200
+curl -sf "${INGEST_BASE}/health" | head -c 200 || wait_http "${INGEST_BASE}/health" "ingestion /health"
 echo ""
-curl -sf http://localhost:9091/health
+wait_http "${CONSUMER_BASE}/health" "consumer /health"
+curl -sf "${CONSUMER_BASE}/health"
 echo ""
 
 echo "==> POST /ingest"
 ts_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
-code="$(curl -sS -o /tmp/ingest-body.txt -w '%{http_code}' -X POST http://localhost:8080/ingest \
-  -H 'Content-Type: application/json' \
-  -H 'X-Tenant-ID: demo' \
-  -d "{\"events\":[{\"tenant_id\":\"demo\",\"model_id\":\"gpt-4o\",\"timestamp_unix_ms\":${ts_ms},\"latency_ms\":100,\"prompt_tokens\":10,\"completion_tokens\":5,\"cost_usd\":0.01,\"status\":\"success\"}]}")"
-echo "HTTP ${code} — $(cat /tmp/ingest-body.txt)"
-[[ "$code" == "202" ]] || { echo "FAIL: expected 202" >&2; exit 1; }
+curl_post_ingest "$ts_ms"
 
 CH_POD="$(kubectl get pods -n "${NS}" -l app.kubernetes.io/component=clickhouse -o jsonpath='{.items[0].metadata.name}')"
-echo "==> Waiting for ClickHouse rows (up to 45s)"
-for _ in $(seq 1 45); do
+echo "==> Waiting for ClickHouse rows (up to ${CH_WAIT_SEC}s)"
+ch_ok=0
+for _ in $(seq 1 "$CH_WAIT_SEC"); do
   count="$(kubectl exec -n "${NS}" "$CH_POD" -- clickhouse-client --query \
     "SELECT count() FROM infra_ai.inference_events WHERE tenant_id='demo' AND cost_usd > 0" 2>/dev/null || echo 0)"
   if [[ "${count:-0}" -gt 0 ]]; then
     echo "    ClickHouse OK (${count} rows)"
     kubectl exec -n "${NS}" "$CH_POD" -- clickhouse-client --query \
       "SELECT tenant_id, model_id, cost_usd FROM infra_ai.inference_events WHERE tenant_id='demo' ORDER BY timestamp DESC LIMIT 3"
+    ch_ok=1
     break
   fi
   sleep 1
 done
+if [[ "$ch_ok" -ne 1 ]]; then
+  echo "FAIL: no demo rows in ClickHouse after ${CH_WAIT_SEC}s" >&2
+  exit 1
+fi
 
 echo "==> Consumer lag metric"
-curl -sf http://localhost:9091/metrics | grep -E '^kafka_consumer_lag_events' | head -3 || echo "WARN: lag metric not found yet"
+curl -sf "${METRICS_CONSUMER}" | grep -E '^kafka_consumer_lag_events' | head -3 || echo "WARN: lag metric not found yet"
 
 echo "==> HPA status"
 kubectl get hpa -n "${NS}" 2>/dev/null || true

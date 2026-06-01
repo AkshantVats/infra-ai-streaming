@@ -128,35 +128,35 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_batch() {
-        let err = validate_events(&[], 1000, 3600_000, 1_000_000).unwrap_err();
+        let err = validate_events(&[], 1000, 3_600_000, 1_000_000).unwrap_err();
         assert_eq!(err, ValidationError::EmptyBatch);
     }
 
     #[test]
     fn validate_rejects_oversized_batch() {
         let events: Vec<_> = (0..3).map(|_| sample_event(1_000_000, 1, 0.0)).collect();
-        let err = validate_events(&events, 2, 3600_000, 1_000_000).unwrap_err();
+        let err = validate_events(&events, 2, 3_600_000, 1_000_000).unwrap_err();
         assert_eq!(err, ValidationError::BatchTooLarge { max: 2 });
     }
 
     #[test]
     fn validate_rejects_zero_latency() {
         let events = vec![sample_event(1_000_000, 0, 0.0)];
-        let err = validate_events(&events, 1000, 3600_000, 1_000_000).unwrap_err();
+        let err = validate_events(&events, 1000, 3_600_000, 1_000_000).unwrap_err();
         assert!(matches!(err, ValidationError::InvalidLatency { .. }));
     }
 
     #[test]
     fn validate_rejects_negative_cost() {
         let events = vec![sample_event(1_000_000, 1, -0.01)];
-        let err = validate_events(&events, 1000, 3600_000, 1_000_000).unwrap_err();
+        let err = validate_events(&events, 1000, 3_600_000, 1_000_000).unwrap_err();
         assert_eq!(err, ValidationError::InvalidCost);
     }
 
     #[test]
     fn validate_rejects_stale_timestamp() {
         let events = vec![sample_event(1_000, 1, 0.0)];
-        let err = validate_events(&events, 1000, 3600_000, 4_000_000).unwrap_err();
+        let err = validate_events(&events, 1000, 3_600_000, 4_000_000).unwrap_err();
         assert_eq!(err, ValidationError::EventTooOld);
     }
 

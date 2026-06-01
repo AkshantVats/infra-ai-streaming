@@ -5,9 +5,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/metrics"
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/model"
 )
+
+// newTestMetrics returns an M backed by a fresh isolated registry so that
+// multiple test functions can each call it without duplicate-registration panics.
+func newTestMetrics() *metrics.M {
+	return metrics.NewWithRegistry(prometheus.NewRegistry())
+}
 
 type mockOverflow struct {
 	pushed int
@@ -64,7 +72,7 @@ func TestHandoffEventsOverflowWhenBreakerOpen(t *testing.T) {
 	w := &BatchWriter{
 		cb:             NewCircuitBreaker(1, 30*time.Minute),
 		overflow:       overflow,
-		m:              metrics.New(),
+		m:              newTestMetrics(),
 		handoffSignals: make(map[uint64]*handoffSignal),
 	}
 	w.cb.RecordFailure()

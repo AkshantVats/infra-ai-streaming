@@ -268,6 +268,9 @@ phase_c() {
   export SKIP_UNIT_TESTS=1
   export CH_READY_TIMEOUT_SEC="${CH_READY_TIMEOUT_SEC:-300}"
   export REDPANDA_READY_TIMEOUT_SEC="${REDPANDA_READY_TIMEOUT_SEC:-300}"
+  # shellcheck source=scripts/lib/k8s-local-ports.sh
+  source "${ROOT}/scripts/lib/k8s-local-ports.sh"
+  ensure_k8s_smoke_ports
   run_step_or_abort "smoke-k8s-e2e" RED ./scripts/smoke-k8s-e2e.sh
 
   if [[ "${SKIP_CHAOS}" == "1" ]]; then
@@ -282,7 +285,7 @@ phase_c() {
 
   run_step "HPA status" YELLOW bash -c "
     kubectl get hpa -n '${NS}' 2>&1 || echo 'No HPA (expected on M1 values-m1)'
-    curl -sf http://localhost:9091/metrics 2>/dev/null | grep -E '^kafka_consumer_lag_events' | head -3 || true
+    curl -sf '${METRICS_CONSUMER}' 2>/dev/null | grep -E '^kafka_consumer_lag_events' | head -3 || true
   "
 }
 
