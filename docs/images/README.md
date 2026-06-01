@@ -1,11 +1,21 @@
 # Documentation images
 
-## Grafana E2E screenshot
+## Architecture diagram (optional)
 
-Add a screenshot of the provisioned local Grafana dashboard here:
+**Filename:** `architecture.png`
+
+Capture from the mermaid diagram in the root [README](../../README.md) (export via your editor or [mermaid.live](https://mermaid.live)), or screenshot the **Local E2E** Grafana dashboard with ingest + consumer running.
+
+Until committed, the README keeps an HTML comment placeholder so links stay valid.
+
+## Grafana E2E screenshot
 
 **Filename:** `grafana-e2e.png`
 
-Capture after running the [3-step local demo](../PROJECT-STATUS.md#3-step-local-demo-http--kafka--stdout) (compose up, ingestion + consumer, `curl /ingest`). The README references this path for the E2E observability section.
+After `./scripts/run.sh --profile m1` or compose + smoke:
 
-Until the file is committed, the README uses an HTML comment placeholder so links do not break CI.
+1. Open http://localhost:3000 (`admin` / `admin`).
+2. Dashboard **AI Inference — Local E2E** (or Product SLO with traffic).
+3. Export PNG and commit here; uncomment the image line in README if added.
+
+See also [`../screenshots/README.md`](../screenshots/README.md) for panel-level captures.

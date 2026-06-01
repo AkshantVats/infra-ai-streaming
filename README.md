@@ -11,7 +11,7 @@ Open-source streaming pipeline for LLM inference events: HTTP ingest with WAL du
 
 ## Quick start
 
-**Prerequisites:** Docker (8 GB+ RAM for full stack), Rust 1.86+, Go 1.22+, cmake. For Kubernetes E2E: `k3d`, `helm`, `kubectl`.
+**Prerequisites:** Docker (8 GB+ RAM for full stack), Rust 1.88+, Go 1.22+, cmake. For Kubernetes E2E: `k3d`, `helm`, `kubectl`.
 
 ```bash
 git clone https://github.com/AkshantVats/infra-ai-streaming.git
@@ -19,7 +19,7 @@ cd infra-ai-streaming
 ./scripts/run.sh --profile m1
 ```
 
-That runs unit tests, deploys the full stack on k3d with M1-safe resource limits, smoke tests, and chaos scenarios. Proof log: [`docs/E2E-PROOF-K3D.md`](docs/E2E-PROOF-K3D.md).
+That runs unit tests, deploys the full stack on k3d with M1-safe resource limits, smoke tests, and chaos scenarios. E2E summary matrix: [`docs/E2E-PROOF-K3D.md`](docs/E2E-PROOF-K3D.md) (full logs are CI artifacts).
 
 **Docker Compose only** (host binaries for ingestion/consumer):
 
@@ -31,7 +31,7 @@ curl -sS -X POST http://localhost:8080/ingest -H 'Content-Type: application/json
   -d '{"events":[{"tenant_id":"demo","model_id":"gpt-4o","timestamp_unix_ms":1715000000000,"latency_ms":342,"prompt_tokens":512,"completion_tokens":128,"cost_usd":0.00423,"status":"success"}]}'
 ```
 
-Grafana: http://localhost:3000 (`admin` / `admin`).
+Grafana: http://localhost:3000 (`admin` / `admin`). Screenshot capture: [`docs/screenshots/README.md`](docs/screenshots/README.md) · [`docs/images/README.md`](docs/images/README.md).
 
 ---
 
@@ -79,6 +79,9 @@ Ingestion is **AP-oriented**: accept and durably record quickly (WAL + Kafka), t
 - Helm chart with HPA on consumer Kafka lag; k3d E2E proof in `docs/E2E-PROOF-K3D.md`
 
 → [Architecture (evergreen)](docs/ARCHITECTURE.md) · [Full flows & troubleshooting](docs/ARCHITECTURE-AND-FLOWS.md) · [Design decisions](DESIGN.md)
+
+<!-- Add docs/images/architecture.png after capture; see docs/images/README.md -->
+<!-- ![Architecture overview](docs/images/architecture.png) -->
 
 ```mermaid
 flowchart LR
@@ -143,7 +146,7 @@ Five failure modes documented with local repro, metrics, and recovery in **[CHAO
 
 ```bash
 cargo fmt --check
-cargo clippy -p ingestion -- -D warnings
+cargo clippy -p ingestion --all-targets -- -D warnings
 cargo test -p ingestion
 (cd consumer && test -z "$(gofmt -l .)" && go test ./...)
 helm dependency update deploy/helm/lensai
@@ -153,8 +156,8 @@ shellcheck -x chaos/*.sh deploy/k3d/*.sh deploy/helm/lensai/files/*.sh deploy/re
 
 | Workflow | When | What |
 |----------|------|------|
-| [CI](.github/workflows/ci.yml) | Every PR / push to `main` | Rust, Go, Helm, shellcheck, gitleaks |
-| [E2E k3d](.github/workflows/e2e-k3d-dispatch.yml) | Weekly + manual | `./scripts/run.sh --profile m1` |
+| [CI](.github/workflows/ci.yml) | Every PR / push to `main` | Rust, Go, Helm, shellcheck, gitleaks, **k3d E2E** (`e2e-k3d` job) |
+| [E2E k3d dispatch](.github/workflows/e2e-k3d-dispatch.yml) | Weekly + manual | Same `./scripts/run.sh --profile m1` (scheduled signal) |
 
 macOS setup: [`docs/dev-macos.md`](docs/dev-macos.md). Project status and roadmap: [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md).
 

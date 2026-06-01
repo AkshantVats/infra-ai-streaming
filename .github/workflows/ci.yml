@@ -29,8 +29,8 @@ jobs:
       - name: Cargo fmt (check)
         run: cargo fmt --check
 
-      - name: Cargo clippy (deny warnings)
-        run: cargo clippy -p ingestion -- -D warnings
+      - name: Cargo clippy (deny warnings, all targets)
+        run: cargo clippy -p ingestion --all-targets -- -D warnings
 
       - name: Cargo test (ingestion)
         run: cargo test -p ingestion --verbose
@@ -112,3 +112,58 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── k3d E2E — runs on every PR (and push to main) ────────────────────────────
+  # This job builds Docker images from source, deploys via Helm to a local k3d
+  # cluster, and runs the smoke E2E script. It catches breakage that unit tests
+  # cannot (image build failures, Helm template regressions, service startup issues).
+  e2e-k3d:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [rust, go, helm, shell]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies (Rust / rdkafka preflight)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libssl-dev libsasl2-dev libzstd-dev libcurl4-openssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: consumer/go.mod
+          cache-dependency-path: consumer/go.sum
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.0
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          k3d version
+
+      - name: Build metadata for images
+        run: |
+          echo "GIT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Full M1 E2E (k3d + Helm)
+        env:
+          GIT_SHA: ${{ env.GIT_SHA }}
+          BUILD_TIME: ${{ env.BUILD_TIME }}
+          HELM_WAIT_TIMEOUT: 5m
+          POD_WAIT_TIMEOUT: 300s
+        run: timeout 25m ./scripts/run.sh --profile m1
+
+      - name: Upload E2E proof snippet on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-k3d-proof-tail
+          path: docs/E2E-PROOF-K3D.md
+          retention-days: 14
