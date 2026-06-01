@@ -47,7 +47,9 @@ curl_post_ingest() {
     attempt=$((attempt + 1))
   done
   echo "FAIL: expected HTTP 202, got ${code:-unknown}" >&2
-  [[ -f /tmp/ingest-body.txt ]] && cat /tmp/ingest-body.txt >&2 || true
+  if [[ -f /tmp/ingest-body.txt ]]; then
+    cat /tmp/ingest-body.txt >&2
+  fi
   return 1
 }
 
