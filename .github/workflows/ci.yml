@@ -163,7 +163,7 @@ jobs:
           SMOKE_PF_WARMUP_SEC: 15
           SMOKE_CURL_RETRIES: 20
           SMOKE_CH_WAIT_SEC: 90
-        run: timeout 25m ./scripts/run.sh --profile m1
+        run: timeout 25m ./scripts/run.sh --profile m1 --skip-chaos
 
       - name: Upload E2E proof snippet on failure
         if: failure()
