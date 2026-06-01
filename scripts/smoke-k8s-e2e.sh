@@ -4,9 +4,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=scripts/lib/k8s-local-ports.sh
+source "${ROOT}/scripts/lib/k8s-local-ports.sh"
+ensure_k8s_smoke_ports
 
 NS="${K8S_NAMESPACE:-lensai}"
 RELEASE="${HELM_RELEASE:-lensai}"
+INGEST_BASE="${INGEST_URL}"
+CONSUMER_BASE="http://localhost:${SMOKE_CON_LOCAL_PORT}"
 CURL_RETRIES="${SMOKE_CURL_RETRIES:-12}"
 CURL_INTERVAL="${SMOKE_CURL_INTERVAL_SEC:-2}"
 PF_WARMUP_SEC="${SMOKE_PF_WARMUP_SEC:-5}"
@@ -34,7 +39,7 @@ curl_post_ingest() {
   local code
   while (( attempt <= CURL_RETRIES )); do
     code="$(curl -sS --connect-timeout 3 --max-time 15 -o /tmp/ingest-body.txt -w '%{http_code}' \
-      -X POST http://localhost:8080/ingest \
+      -X POST "${INGEST_BASE}/ingest" \
       -H 'Content-Type: application/json' \
       -H 'X-Tenant-ID: demo' \
       -d "{\"events\":[{\"tenant_id\":\"demo\",\"model_id\":\"gpt-4o\",\"timestamp_unix_ms\":${ts_ms},\"latency_ms\":100,\"prompt_tokens\":10,\"completion_tokens\":5,\"cost_usd\":0.01,\"status\":\"success\"}]}")" || code="000"
@@ -77,18 +82,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> Port-forward ingestion :8080 and consumer metrics :9091"
-kubectl port-forward -n "${NS}" svc/ingestion 8080:8080 >/tmp/pf-ing.log 2>&1 &
+echo "==> Port-forward ingestion localhost:${SMOKE_ING_LOCAL_PORT} and consumer localhost:${SMOKE_CON_LOCAL_PORT}"
+kubectl port-forward -n "${NS}" svc/ingestion "${SMOKE_ING_LOCAL_PORT}:8080" >/tmp/pf-ing.log 2>&1 &
 PF_ING=$!
-kubectl port-forward -n "${NS}" svc/consumer 9091:9091 >/tmp/pf-con.log 2>&1 &
+kubectl port-forward -n "${NS}" svc/consumer "${SMOKE_CON_LOCAL_PORT}:9091" >/tmp/pf-con.log 2>&1 &
 PF_CON=$!
 sleep "$PF_WARMUP_SEC"
+if ! port_is_listening "${SMOKE_ING_LOCAL_PORT}" || ! port_is_listening "${SMOKE_CON_LOCAL_PORT}"; then
+  echo "FAIL: port-forward did not bind (see /tmp/pf-ing.log, /tmp/pf-con.log)" >&2
+  cat /tmp/pf-ing.log /tmp/pf-con.log >&2 2>/dev/null || true
+  exit 1
+fi
 
 echo "==> Health checks"
-curl -sf http://localhost:8080/health | head -c 200 || wait_http "http://localhost:8080/health" "ingestion /health"
+curl -sf "${INGEST_BASE}/health" | head -c 200 || wait_http "${INGEST_BASE}/health" "ingestion /health"
 echo ""
-wait_http "http://localhost:9091/health" "consumer /health"
-curl -sf http://localhost:9091/health
+wait_http "${CONSUMER_BASE}/health" "consumer /health"
+curl -sf "${CONSUMER_BASE}/health"
 echo ""
 
 echo "==> POST /ingest"
@@ -116,7 +126,7 @@ if [[ "$ch_ok" -ne 1 ]]; then
 fi
 
 echo "==> Consumer lag metric"
-curl -sf http://localhost:9091/metrics | grep -E '^kafka_consumer_lag_events' | head -3 || echo "WARN: lag metric not found yet"
+curl -sf "${METRICS_CONSUMER}" | grep -E '^kafka_consumer_lag_events' | head -3 || echo "WARN: lag metric not found yet"
 
 echo "==> HPA status"
 kubectl get hpa -n "${NS}" 2>/dev/null || true

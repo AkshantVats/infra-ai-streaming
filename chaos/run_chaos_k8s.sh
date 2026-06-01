@@ -12,12 +12,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=scripts/lib/k8s-local-ports.sh
+source "${ROOT}/scripts/lib/k8s-local-ports.sh"
+ensure_k8s_smoke_ports
 
 NS="${K8S_NAMESPACE:-lensai}"
 RELEASE="${HELM_RELEASE:-lensai}"
-INGEST_URL="${INGEST_URL:-http://localhost:8080}"
-METRICS_INGEST="${METRICS_INGEST:-http://localhost:8080/metrics}"
-METRICS_CONSUMER="${METRICS_CONSUMER:-http://localhost:9091/metrics}"
 LOAD_EVENTS="${LOAD_EVENTS:-2000}"
 LOAD_DURATION_SEC="${LOAD_DURATION_SEC:-10}"
 REDPANDA_DOWN_SEC="${REDPANDA_DOWN_SEC:-20}"
@@ -125,10 +125,10 @@ start_port_forwards() {
     log "Ingestion already reachable at ${INGEST_URL}"
     return 0
   fi
-  log "Starting port-forwards (ingestion :8080, consumer :9091)"
-  kubectl port-forward -n "${NS}" svc/ingestion 8080:8080 >/tmp/pf-ing-k8s.log 2>&1 &
+  log "Starting port-forwards (ingestion localhost:${SMOKE_ING_LOCAL_PORT}, consumer localhost:${SMOKE_CON_LOCAL_PORT})"
+  kubectl port-forward -n "${NS}" svc/ingestion "${SMOKE_ING_LOCAL_PORT}:8080" >/tmp/pf-ing-k8s.log 2>&1 &
   PF_ING=$!
-  kubectl port-forward -n "${NS}" svc/consumer 9091:9091 >/tmp/pf-con-k8s.log 2>&1 &
+  kubectl port-forward -n "${NS}" svc/consumer "${SMOKE_CON_LOCAL_PORT}:9091" >/tmp/pf-con-k8s.log 2>&1 &
   PF_CON=$!
   sleep 2
   disown_port_forwards
