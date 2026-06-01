@@ -17,6 +17,9 @@ groups:
         data:
           - refId: A
             datasourceUid: prometheus
+            relativeTimeRange:
+              from: 300
+              to: 0
             model:
               expr: increase(anomalies_detected_total[5m])
               refId: A

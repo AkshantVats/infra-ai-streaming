@@ -31,7 +31,11 @@ curl -sS -X POST http://localhost:8080/ingest -H 'Content-Type: application/json
   -d '{"events":[{"tenant_id":"demo","model_id":"gpt-4o","timestamp_unix_ms":1715000000000,"latency_ms":342,"prompt_tokens":512,"completion_tokens":128,"cost_usd":0.00423,"status":"success"}]}'
 ```
 
-Grafana: http://localhost:3000 (`admin` / `admin`). Screenshot capture: [`docs/screenshots/README.md`](docs/screenshots/README.md) · [`docs/images/README.md`](docs/images/README.md).
+Grafana (Compose stack): http://localhost:3000 (`admin` / `admin`). After `./scripts/run.sh --profile m1 --target compose`, start ingestion + consumer on the host (see Quick start above), then open the dashboards below. Screenshot capture: [`docs/screenshots/README.md`](docs/screenshots/README.md).
+
+![Local E2E dashboard](docs/screenshots/grafana-e2e-local.png)
+
+![Product SLO dashboard](docs/screenshots/grafana-product-slo.png)
 
 ---
 

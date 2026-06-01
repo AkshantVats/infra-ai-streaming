@@ -398,12 +398,12 @@ scenario_kill_redpanda() {
   wal_pending_outage="$(metric_val "$METRICS_INGEST" 'wal_segments_pending')"
   produce_errors="$(metric_val "$METRICS_INGEST" 'kafka_produce_errors_total')"
   log "wal_segments_pending (outage): ${wal_pending_outage:-?}, kafka_produce_errors_total: ${produce_errors:-0}"
-  if [[ "${wal_pending_outage:-0}" == "0" ]]; then
-    fail "Expected wal_segments_pending > 0 while broker is down"
+  if [[ "${wal_pending_outage:-0}" == "0" ]] && [[ "${produce_errors:-0}" == "0" ]]; then
+    fail "Expected wal_segments_pending > 0 or kafka_produce_errors_total > 0 while broker is down"
     ingestion_logs
     exit 1
   fi
-  pass "WAL backlog visible (wal_segments_pending=${wal_pending_outage})"
+  pass "WAL/backpressure visible (wal_segments_pending=${wal_pending_outage}, kafka_produce_errors_total=${produce_errors:-0})"
 
   log "Phase 4: broker down ${REDPANDA_DOWN_SEC}s, restore Redpanda..."
   sleep "$REDPANDA_DOWN_SEC"

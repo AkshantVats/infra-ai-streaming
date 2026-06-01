@@ -8,14 +8,11 @@ Capture from the mermaid diagram in the root [README](../../README.md) (export v
 
 Until committed, the README keeps an HTML comment placeholder so links stay valid.
 
-## Grafana E2E screenshot
+## Grafana screenshots
 
-**Filename:** `grafana-e2e.png`
+Canonical PNGs live under [`../screenshots/`](../screenshots/) and are embedded in the root [README](../../README.md):
 
-After `./scripts/run.sh --profile m1` or compose + smoke:
+- `grafana-e2e-local.png` — Local E2E dashboard
+- `grafana-product-slo.png` — Product SLO dashboard
 
-1. Open http://localhost:3000 (`admin` / `admin`).
-2. Dashboard **AI Inference — Local E2E** (or Product SLO with traffic).
-3. Export PNG and commit here; uncomment the image line in README if added.
-
-See also [`../screenshots/README.md`](../screenshots/README.md) for panel-level captures.
+Capture steps: [`../screenshots/README.md`](../screenshots/README.md).
