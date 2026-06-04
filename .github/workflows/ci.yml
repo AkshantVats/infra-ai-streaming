@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: consumer/go.mod
           cache-dependency-path: consumer/go.sum
@@ -135,7 +135,7 @@ jobs:
         with:
           toolchain: "1.88"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: consumer/go.mod
           cache-dependency-path: consumer/go.sum
