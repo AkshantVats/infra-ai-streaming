@@ -7,8 +7,11 @@ updates:
     open-pull-requests-limit: 10
     groups:
       actions-minor-patch:
-        patterns: ["*"]
-        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "cargo"
     directory: "/"
@@ -17,8 +20,11 @@ updates:
     open-pull-requests-limit: 10
     groups:
       rust-minor-patch:
-        patterns: ["*"]
-        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "gomod"
     directory: "/consumer"
@@ -27,5 +33,8 @@ updates:
     open-pull-requests-limit: 10
     groups:
       go-minor-patch:
-        patterns: ["*"]
-        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
