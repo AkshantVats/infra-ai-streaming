@@ -1,0 +1,112 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: flagdefinitions.flagd.lensai.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: flagd.lensai.io
+  names:
+    kind: FlagDefinition
+    listKind: FlagDefinitionList
+    plural: flagdefinitions
+    singular: flagdefinition
+    shortNames:
+      - fd
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          description: FlagDefinition declares a feature flag that the distributed-flagd controller syncs to etcd.
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [flagKey]
+              properties:
+                flagKey:
+                  type: string
+                  description: "etcd flag key, e.g. model-rollout:tenant-a"
+                  minLength: 1
+                  maxLength: 255
+                enabled:
+                  type: boolean
+                  default: true
+                  description: "When false the flag is disabled — evaluations fall back to defaultModel"
+                value:
+                  type: string
+                  description: "Static value for boolean/string flags (mutually exclusive with variants)"
+                variants:
+                  type: array
+                  description: "Percentage-rollout buckets. Weights must sum to 100."
+                  maxItems: 20
+                  items:
+                    type: object
+                    required: [value, weight]
+                    properties:
+                      value:
+                        type: string
+                        description: "Fully-qualified model ID, e.g. gpt-4o-2024-05-13"
+                        minLength: 1
+                      weight:
+                        type: integer
+                        description: "Percentage (0–100). All weights must sum to 100."
+                        minimum: 0
+                        maximum: 100
+            status:
+              type: object
+              properties:
+                syncedAt:
+                  type: string
+                  description: "RFC3339 timestamp of last successful etcd sync"
+                syncedRevision:
+                  type: string
+                  description: "etcd ModRevision after last write"
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: [True, False, Unknown]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: FlagKey
+          type: string
+          jsonPath: .spec.flagKey
+          description: "etcd flag key"
+        - name: Enabled
+          type: boolean
+          jsonPath: .spec.enabled
+        - name: Variants
+          type: integer
+          jsonPath: .spec.variants
+          description: "Number of rollout variants"
+        - name: Synced
+          type: string
+          jsonPath: .status.syncedAt
+          description: "Last synced to etcd"
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

@@ -1,0 +1,17 @@
+apiVersion: flagd.lensai.io/v1alpha1
+kind: FlagDefinition
+metadata:
+  name: demo-tenant-model-rollout
+  namespace: default
+  labels:
+    app.kubernetes.io/component: model-rollout
+    lensai.io/day: "24"
+spec:
+  flagKey: "model-rollout:demo-tenant"
+  enabled: true
+  variants:
+    # Phase 2 — ramp: equal split to validate cost and quality
+    - value: "gpt-4o-mini"
+      weight: 50
+    - value: "gpt-4o"
+      weight: 50

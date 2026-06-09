@@ -1,0 +1,17 @@
+apiVersion: v2
+name: distributed-flagd
+description: Kubernetes-native feature-flag service for LensAI model rollouts (etcd + gRPC + CRD controller)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - feature-flags
+  - ai
+  - lensai
+  - model-rollout
+home: https://github.com/AkshantVats/infra-ai-streaming
+sources:
+  - https://github.com/AkshantVats/infra-ai-streaming
+maintainers:
+  - name: AkshantVats
+    email: akshant3@gmail.com
