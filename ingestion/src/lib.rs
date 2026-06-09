@@ -5,6 +5,7 @@ pub mod config;
 pub mod handlers;
 pub mod kafka;
 pub mod metrics;
+pub mod model_resolver;
 pub mod rate_limit;
 pub mod server;
 pub mod wal;

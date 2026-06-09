@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthz(t *testing.T) {
-	h := httpapi.New(nil, nil)
+	h := httpapi.New(nil, nil, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	h.Healthz(rec, req)
@@ -23,7 +23,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestMethodNotAllowed(t *testing.T) {
-	h := httpapi.New(nil, nil)
+	h := httpapi.New(nil, nil, nil)
 	mux := http.NewServeMux()
 	httpapi.RegisterRoutes(mux, h)
 

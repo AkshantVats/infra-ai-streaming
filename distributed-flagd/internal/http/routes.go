@@ -30,4 +30,5 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler) {
 	})
 
 	mux.HandleFunc("/healthz", h.Healthz)
+	mux.HandleFunc("/evaluate", h.Evaluate)
 }

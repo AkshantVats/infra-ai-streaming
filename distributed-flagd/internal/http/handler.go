@@ -10,17 +10,62 @@ import (
 
 	"github.com/akshantvats/distributed-flagd/internal/audit"
 	"github.com/akshantvats/distributed-flagd/internal/etcdstore"
+	"github.com/akshantvats/distributed-flagd/internal/eval"
 )
 
 // Handler holds dependencies for all HTTP handlers.
 type Handler struct {
-	store  *etcdstore.Client
-	logger *audit.Logger
+	store     *etcdstore.Client
+	logger    *audit.Logger
+	evaluator *eval.ModelEvaluator
 }
 
-// New returns a Handler wired to the etcd store and audit logger.
-func New(store *etcdstore.Client, logger *audit.Logger) *Handler {
-	return &Handler{store: store, logger: logger}
+// New returns a Handler wired to the etcd store, audit logger, and model evaluator.
+func New(store *etcdstore.Client, logger *audit.Logger, evaluator *eval.ModelEvaluator) *Handler {
+	return &Handler{store: store, logger: logger, evaluator: evaluator}
+}
+
+// evalRequest is the JSON body for POST /evaluate.
+type evalRequest struct {
+	TenantID string `json:"tenant_id"`
+	UserID   string `json:"user_id"`
+}
+
+// evalResponse is the JSON response for POST /evaluate.
+type evalResponse struct {
+	ResolvedModelID string `json:"resolved_model_id"`
+	Variant         string `json:"variant"`
+	FlagKey         string `json:"flag_key"`
+}
+
+// Evaluate resolves the active model version for a tenant+user pair.
+// POST /evaluate — body: {"tenant_id": "...", "user_id": "..."}
+// Response: {"resolved_model_id": "...", "variant": "...", "flag_key": "..."}
+func (h *Handler) Evaluate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req evalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.TenantID == "" || req.UserID == "" {
+		writeError(w, "tenant_id and user_id are required", http.StatusBadRequest)
+		return
+	}
+	result, err := h.evaluator.ResolveModelVersion(r.Context(), req.TenantID, req.UserID)
+	if err != nil {
+		writeError(w, "evaluation failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(evalResponse{
+		ResolvedModelID: result.ModelVersion,
+		Variant:         result.Variant,
+		FlagKey:         result.FlagKey,
+	})
 }
 
 // flagRequest is the JSON body for POST /flags and PUT /flags/{name}.
