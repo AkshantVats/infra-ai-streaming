@@ -173,12 +173,27 @@ macOS setup: [`docs/dev-macos.md`](docs/dev-macos.md). Project status and roadma
 infra-ai-streaming/
 ├── ingestion/          # Rust — Axum HTTP, WAL, Kafka producer
 ├── consumer/           # Go — Kafka reader, ClickHouse writer
+├── distributed-flagd/  # Go — self-hosted feature flag control plane
 ├── deploy/             # Compose, Helm, k3d, Grafana, Prometheus
 ├── dashboards/         # Grafana JSON exports
 ├── chaos/              # Failure injection scripts
 ├── scripts/run.sh      # Config-driven deploy entry point
 └── docs/               # Architecture, runbook, E2E checklist
 ```
+
+---
+
+## Platform
+
+This repo is one piece of a three-component AI inference observability platform built open-source:
+
+| Repo | Role |
+|---|---|
+| [infra-ai-streaming](https://github.com/AkshantVats/infra-ai-streaming) | Rust ingestion engine → Kafka → Go consumer → ClickHouse → Grafana |
+| [distributed-flagd](https://github.com/AkshantVats/infra-ai-streaming/tree/main/distributed-flagd) | Go feature flag daemon — model version rollout, kill-switch, Kafka audit log |
+| [ebpf-llm-tracer](https://github.com/AkshantVats/ebpf-llm-tracer) | eBPF kernel probes — zero-code LLM request tracing at the syscall level |
+
+These components are designed to run together: ebpf-llm-tracer captures inference requests at the kernel, infra-ai-streaming ingests and stores them, and distributed-flagd controls which model version each request is routed to.
 
 ---
 
