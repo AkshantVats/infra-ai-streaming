@@ -1,0 +1,71 @@
+name: flagd-integration
+
+on:
+  push:
+    branches: [main, "feat/flagd-*"]
+    paths:
+      - "distributed-flagd/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "distributed-flagd/**"
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: distributed-flagd/go.mod
+          cache-dependency-path: distributed-flagd/go.sum
+
+      - name: gofmt (check)
+        run: |
+          cd distributed-flagd
+          test -z "$(gofmt -l .)"
+
+      - name: go vet
+        run: cd distributed-flagd && go vet ./...
+
+      - name: go test (unit + SDK)
+        run: cd distributed-flagd && go test ./...
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      etcd:
+        image: bitnami/etcd:3.5
+        env:
+          ALLOW_NONE_AUTHENTICATION: "yes"
+        ports:
+          - 2379:2379
+        options: >-
+          --health-cmd "etcdctl endpoint health --endpoints=http://localhost:2379"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: distributed-flagd/go.mod
+          cache-dependency-path: distributed-flagd/go.sum
+
+      - name: Wait for etcd
+        run: |
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:2379/health && break
+            echo "waiting for etcd ($i/20)..."
+            sleep 3
+          done
+
+      - name: go test (integration)
+        env:
+          FLAGD_INTEGRATION: "1"
+          FLAGD_TEST_ETCD: "localhost:2379"
+        run: cd distributed-flagd && go test -v -timeout 60s ./tests/integration/...

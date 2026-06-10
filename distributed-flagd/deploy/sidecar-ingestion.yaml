@@ -1,0 +1,123 @@
+# distributed-flagd deployed as a sidecar next to the LensAI ingestion service.
+#
+# The ingestion container calls http://localhost:8080/evaluate to resolve the
+# active model version per request. The resolved_model_id is written to
+# inference_events for ClickHouse cost attribution.
+#
+# Deploy:
+#   kubectl apply -f deploy/sidecar-ingestion.yaml -n lensai
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lensai-ingestion
+  namespace: lensai
+  labels:
+    app: lensai-ingestion
+    version: "0.1.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: lensai-ingestion
+  template:
+    metadata:
+      labels:
+        app: lensai-ingestion
+    spec:
+      # ── Init: wait for etcd before starting containers ─────────────────────
+      initContainers:
+        - name: wait-for-etcd
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z etcd-headless.lensai.svc.cluster.local 2379; do
+                echo "waiting for etcd..."; sleep 2;
+              done
+
+      containers:
+        # ── Primary: Rust ingestion engine ────────────────────────────────────
+        - name: ingestion
+          image: ghcr.io/akshantvats/lensai-ingestion:latest
+          ports:
+            - name: http
+              containerPort: 9090
+          env:
+            # sidecar is on the same Pod network — no extra network hop
+            - name: FLAGD_ADDR
+              value: "http://localhost:8080"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+        # ── Sidecar: distributed-flagd ─────────────────────────────────────────
+        - name: flagd
+          image: ghcr.io/akshantvats/distributed-flagd:latest
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 9091
+          env:
+            - name: FLAGD_ETCD_ENDPOINTS
+              value: "http://etcd-headless.lensai.svc.cluster.local:2379"
+            - name: FLAGD_HTTP_ADDR
+              value: ":8080"
+            - name: FLAGD_GRPC_ADDR
+              value: ":9091"
+            - name: FLAGD_KAFKA_BROKERS
+              value: "redpanda-0.redpanda.lensai.svc.cluster.local:9092"
+            - name: FLAGD_AUDIT_TOPIC
+              value: "flag-audit-log"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+
+---
+# Sample FlagDefinition for model-version canary routing.
+# Seed via: flagctl apply -f deploy/sidecar-ingestion.yaml
+#
+# Routes 10% of traffic to gpt-4o for latency comparison.
+# resolved_model_id in inference_events reflects which model each request used.
+apiVersion: flagd.lensai.io/v1alpha1
+kind: FlagDefinition
+metadata:
+  name: model-version
+  namespace: lensai
+spec:
+  value: gpt-4o-mini
+  enabled: true
+  variants:
+    - value: gpt-4o-mini
+      weight: 90
+    - value: gpt-4o
+      weight: 10
+  description: "Canary: 10% to gpt-4o for latency/cost comparison via LensAI"
