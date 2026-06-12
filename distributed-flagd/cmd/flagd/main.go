@@ -18,6 +18,7 @@ import (
 
 	httpapi "github.com/akshantvats/distributed-flagd/internal/http"
 	"github.com/akshantvats/distributed-flagd/internal/audit"
+	"github.com/akshantvats/distributed-flagd/internal/eval"
 	"github.com/akshantvats/distributed-flagd/internal/etcdstore"
 	"github.com/akshantvats/distributed-flagd/internal/server"
 )
@@ -57,7 +58,9 @@ func main() {
 	// HTTP server
 	store := etcdstore.NewClient(etcdClient)
 	auditLogger := audit.New(etcdClient)
-	handler := httpapi.New(store, auditLogger)
+	defaultModel := getEnv("DEFAULT_MODEL_ID", "gpt-3.5-turbo")
+	modelEvaluator := eval.NewModelEvaluator(store, defaultModel)
+	handler := httpapi.New(store, auditLogger, modelEvaluator)
 	mux := http.NewServeMux()
 	httpapi.RegisterRoutes(mux, handler)
 	httpServer := &http.Server{Addr: httpAddr, Handler: mux}

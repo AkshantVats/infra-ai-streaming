@@ -8,6 +8,11 @@ pub struct InferenceEvent {
     pub event_id: Option<String>,
     pub tenant_id: String,
     pub model_id: String,
+    /// Fully-qualified model version resolved by the flagd sidecar at ingest time.
+    /// Enables per-model-version cost attribution in ClickHouse even when model_id
+    /// uses a logical alias (e.g. "gpt-4") rather than a versioned ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_model_id: Option<String>,
     pub timestamp_unix_ms: u64,
     pub latency_ms: u32,
     pub prefill_latency_ms: Option<u32>,
