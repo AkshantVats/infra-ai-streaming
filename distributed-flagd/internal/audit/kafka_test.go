@@ -44,7 +44,7 @@ func TestKafkaProducerNilBrokers(t *testing.T) {
 		return
 	}
 	defer p.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*/* seconds */ 1000000000)
+	ctx, cancel := context.WithTimeout(context.Background(), 2* /* seconds */ 1000000000)
 	defer cancel()
 	err = p.Publish(ctx, KafkaEntry{FlagName: "test", ChangedBy: "test"})
 	if err == nil {
