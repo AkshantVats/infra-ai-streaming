@@ -113,6 +113,7 @@ mod tests {
             event_id: None,
             tenant_id: "t1".into(),
             model_id: "gpt-4o".into(),
+            resolved_model_id: None,
             timestamp_unix_ms: ts,
             latency_ms: latency,
             prefill_latency_ms: None,
