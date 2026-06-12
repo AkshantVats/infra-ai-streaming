@@ -1,0 +1,59 @@
+syntax = "proto3";
+package flagd.v1;
+option go_package = "github.com/akshantvats/distributed-flagd/gen/flagd/v1;flagdv1";
+
+service FlagService {
+  rpc GetFlag(GetFlagRequest) returns (FlagValue);
+  rpc SetFlag(SetFlagRequest) returns (SetFlagResponse);
+  rpc EvaluateStream(EvaluateStreamRequest) returns (stream FlagUpdate);
+  rpc ListFlags(ListFlagsRequest) returns (FlagList);
+}
+
+message GetFlagRequest {
+  string name = 1;
+  string hash_key = 2;
+}
+
+message FlagValue {
+  string name = 1;
+  string value = 2;
+  bool enabled = 3;
+  string variant = 4;
+}
+
+message SetFlagRequest {
+  string name = 1;
+  string value = 2;
+  bool enabled = 3;
+  repeated PercentageVariant variants = 4;
+  string changed_by = 5;
+}
+
+message PercentageVariant {
+  string value = 1;
+  int32 weight = 2;
+}
+
+message SetFlagResponse {
+  bool ok = 1;
+  string revision = 2;
+}
+
+message EvaluateStreamRequest {
+  string hash_key = 1;
+}
+
+message FlagUpdate {
+  enum UpdateType {
+    SNAPSHOT = 0;
+    DELTA = 1;
+  }
+  UpdateType type = 1;
+  FlagValue flag = 2;
+}
+
+message ListFlagsRequest {}
+
+message FlagList {
+  repeated FlagValue flags = 1;
+}
