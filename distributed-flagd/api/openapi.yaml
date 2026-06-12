@@ -1,0 +1,283 @@
+openapi: "3.0.3"
+info:
+  title: distributed-flagd API
+  version: "0.1.0"
+  description: |
+    HTTP management API for distributed-flagd — the LensAI feature flag server.
+    Flags are stored in etcd and streamed via gRPC watch. This REST API handles
+    control-plane operations: flag CRUD, evaluation, and health.
+servers:
+  - url: http://flagd:8080
+    description: In-cluster sidecar (Pod-local network)
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /flags:
+    get:
+      operationId: listFlags
+      summary: List all feature flags
+      responses:
+        "200":
+          description: All flags currently stored in etcd
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlagList'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createFlag
+      summary: Create a feature flag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FlagRequest'
+      responses:
+        "201":
+          description: Flag created and persisted in etcd
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlagData'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /flags/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Flag name (alphanumeric, hyphens, underscores)
+    get:
+      operationId: getFlag
+      summary: Get a feature flag by name
+      responses:
+        "200":
+          description: Flag found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlagData'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    put:
+      operationId: updateFlag
+      summary: Update a feature flag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FlagRequest'
+      responses:
+        "200":
+          description: Flag updated and audit log written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlagData'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: deleteFlag
+      summary: Delete a feature flag
+      responses:
+        "204":
+          description: Flag deleted; audit log entry written
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /evaluate:
+    post:
+      operationId: evaluate
+      summary: Resolve the active model version for a tenant+user pair
+      description: |
+        Evaluates the model-version flag using deterministic hash(tenant_id+user_id)
+        for stable per-user assignment across requests.
+
+        The returned resolved_model_id should be written to
+        inference_events.resolved_model_id in ClickHouse for cost attribution
+        (see LensAI Day 26 cost model post).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvalRequest'
+      responses:
+        "200":
+          description: Resolved model and variant assignment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalResponse'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+
+    VariantData:
+      type: object
+      required: [value, weight]
+      properties:
+        value:
+          type: string
+          description: Model identifier for this variant
+          example: gpt-4o-mini
+        weight:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Percentage of traffic assigned to this variant
+
+    FlagData:
+      type: object
+      required: [name, value, enabled]
+      properties:
+        name:
+          type: string
+          description: Unique flag identifier
+          example: model-version
+        value:
+          type: string
+          description: Default value when no variant matches or flag is disabled
+          example: gpt-4o-mini
+        enabled:
+          type: boolean
+          description: When false the default value is always returned
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/VariantData'
+          description: Percentage-rollout buckets; weights must sum to 100 when present
+
+    FlagRequest:
+      type: object
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          example: model-version
+        value:
+          type: string
+          example: gpt-4o-mini
+        enabled:
+          type: boolean
+          default: true
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/VariantData'
+        changed_by:
+          type: string
+          description: Operator identity written to the Kafka audit log
+          example: ops-team
+        reason:
+          type: string
+          description: Free-text change rationale
+          example: "Canary 10% to gpt-4o for latency comparison"
+
+    FlagList:
+      type: object
+      properties:
+        flags:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlagData'
+        count:
+          type: integer
+
+    EvalRequest:
+      type: object
+      required: [tenant_id, user_id]
+      properties:
+        tenant_id:
+          type: string
+          description: Tenant identifier (maps to LensAI inference_events.tenant_id)
+          example: acme-corp
+        user_id:
+          type: string
+          description: End-user or request ID for stable hash-based assignment
+          example: user-42
+
+    EvalResponse:
+      type: object
+      properties:
+        resolved_model_id:
+          type: string
+          description: |
+            Model version to use for this request.
+            Write to inference_events.resolved_model_id for ClickHouse cost attribution.
+          example: gpt-4o-mini
+        variant:
+          type: string
+          description: Which variant bucket was selected
+          example: control
+        flag_key:
+          type: string
+          description: Flag that drove this resolution
+          example: model-version
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Bad request — missing or invalid fields
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Flag not found in etcd
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
