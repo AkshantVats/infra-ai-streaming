@@ -16,10 +16,10 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 
-	httpapi "github.com/akshantvats/distributed-flagd/internal/http"
 	"github.com/akshantvats/distributed-flagd/internal/audit"
-	"github.com/akshantvats/distributed-flagd/internal/eval"
 	"github.com/akshantvats/distributed-flagd/internal/etcdstore"
+	"github.com/akshantvats/distributed-flagd/internal/eval"
+	httpapi "github.com/akshantvats/distributed-flagd/internal/http"
 	"github.com/akshantvats/distributed-flagd/internal/server"
 )
 

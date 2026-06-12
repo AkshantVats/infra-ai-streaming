@@ -70,12 +70,12 @@ func (h *Handler) Evaluate(w http.ResponseWriter, r *http.Request) {
 
 // flagRequest is the JSON body for POST /flags and PUT /flags/{name}.
 type flagRequest struct {
-	Name      string                `json:"name"`
-	Value     string                `json:"value"`
-	Enabled   bool                  `json:"enabled"`
+	Name      string                  `json:"name"`
+	Value     string                  `json:"value"`
+	Enabled   bool                    `json:"enabled"`
 	Variants  []etcdstore.VariantData `json:"variants,omitempty"`
-	ChangedBy string                `json:"changed_by"`
-	Reason    string                `json:"reason"`
+	ChangedBy string                  `json:"changed_by"`
+	Reason    string                  `json:"reason"`
 }
 
 func (h *Handler) CreateFlag(w http.ResponseWriter, r *http.Request) {
