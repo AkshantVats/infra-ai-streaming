@@ -80,6 +80,18 @@ func (c *Client) ListFlags(ctx context.Context) ([]*FlagData, error) {
 	return out, nil
 }
 
+// DeleteFlag removes a flag by name. Returns ErrFlagNotFound if absent.
+func (c *Client) DeleteFlag(ctx context.Context, name string) error {
+	resp, err := c.kv.Delete(ctx, flagPrefix+name)
+	if err != nil {
+		return err
+	}
+	if resp.Deleted == 0 {
+		return fmt.Errorf("flag not found: %s", name)
+	}
+	return nil
+}
+
 // WatchFlags returns an etcd watch channel on the /flags/ prefix.
 func (c *Client) WatchFlags(ctx context.Context) clientv3.WatchChan {
 	return c.watcher.Watch(ctx, flagPrefix, clientv3.WithPrefix())

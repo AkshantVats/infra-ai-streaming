@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
@@ -17,20 +18,51 @@ import (
 	"github.com/akshantvats/distributed-flagd/internal/eval"
 )
 
-// Server implements pb.FlagServiceServer.
+// Server implements pb.FlagServiceServer using a shared fan-out registry
+// so a single etcd watcher feeds all open EvaluateStream connections.
 type Server struct {
 	pb.UnimplementedFlagServiceServer
-	ec *etcdstore.Client
+	ec       *etcdstore.Client
+	registry *registry
 }
 
-// New constructs a Server backed by the provided etcd client.
-func New(c *clientv3.Client) *Server {
-	return &Server{ec: etcdstore.NewClient(c)}
+// New constructs a Server and starts a background watcher that broadcasts
+// flag mutations to all open EvaluateStream clients.
+func New(ctx context.Context, c *clientv3.Client) *Server {
+	s := &Server{
+		ec:       etcdstore.NewClient(c),
+		registry: newRegistry(),
+	}
+	go s.watchLoop(ctx)
+	return s
 }
 
 // Register wires the Server into a gRPC server.
 func (s *Server) Register(gs *grpc.Server) {
 	pb.RegisterFlagServiceServer(gs, s)
+}
+
+// watchLoop runs for the lifetime of ctx, reading from the etcd watch channel
+// and broadcasting every change to all registered stream clients.
+func (s *Server) watchLoop(ctx context.Context) {
+	watchChan := s.ec.WatchFlags(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case resp, ok := <-watchChan:
+			if !ok {
+				return
+			}
+			for _, ev := range resp.Events {
+				var fd etcdstore.FlagData
+				if err := json.Unmarshal(ev.Kv.Value, &fd); err != nil {
+					continue
+				}
+				s.registry.broadcast(&fd)
+			}
+		}
+	}
 }
 
 func (s *Server) GetFlag(ctx context.Context, req *pb.GetFlagRequest) (*pb.FlagValue, error) {
@@ -69,8 +101,11 @@ func (s *Server) SetFlag(ctx context.Context, req *pb.SetFlagRequest) (*pb.SetFl
 	return &pb.SetFlagResponse{Ok: true}, nil
 }
 
+// EvaluateStream sends a SNAPSHOT of all flags on connect, then streams
+// DELTA updates via the shared registry fan-out instead of a per-stream watcher.
 func (s *Server) EvaluateStream(req *pb.EvaluateStreamRequest, stream pb.FlagService_EvaluateStreamServer) error {
 	ctx := stream.Context()
+
 	flags, err := s.ec.ListFlags(ctx)
 	if err != nil {
 		return status.Errorf(codes.Internal, "list flags: %v", err)
@@ -83,26 +118,24 @@ func (s *Server) EvaluateStream(req *pb.EvaluateStreamRequest, stream pb.FlagSer
 			return err
 		}
 	}
-	watchChan := s.ec.WatchFlags(ctx)
+
+	streamID := fmt.Sprintf("%s/%p", req.HashKey, stream)
+	ch := s.registry.subscribe(streamID)
+	defer s.registry.unsubscribe(streamID)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case resp, ok := <-watchChan:
+		case fd, ok := <-ch:
 			if !ok {
 				return nil
 			}
-			for _, ev := range resp.Events {
-				var fd etcdstore.FlagData
-				if err := json.Unmarshal(ev.Kv.Value, &fd); err != nil {
-					continue
-				}
-				if err := stream.Send(&pb.FlagUpdate{
-					Type: pb.FlagUpdate_DELTA,
-					Flag: &pb.FlagValue{Name: fd.Name, Value: fd.Value, Enabled: fd.Enabled},
-				}); err != nil {
-					return err
-				}
+			if err := stream.Send(&pb.FlagUpdate{
+				Type: pb.FlagUpdate_DELTA,
+				Flag: &pb.FlagValue{Name: fd.Name, Value: fd.Value, Enabled: fd.Enabled},
+			}); err != nil {
+				return err
 			}
 		}
 	}
