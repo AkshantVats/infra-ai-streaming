@@ -1,0 +1,51 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/akshantvats/distributed-flagd
+  pullPolicy: IfNotPresent
+  tag: ""
+
+etcd:
+  endpoints: "etcd-headless:2379"
+  dialTimeoutSeconds: 5
+
+flagd:
+  defaultModelID: "gpt-4o-mini"
+  grpcAddr: ":50051"
+  httpAddr: ":8080"
+
+controller:
+  # namespace to watch for FlagDefinition CRs
+  namespace: "default"
+
+service:
+  type: ClusterIP
+  grpcPort: 50051
+  httpPort: 8080
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Install the FlagDefinition CRD as part of the chart
+installCRD: true
