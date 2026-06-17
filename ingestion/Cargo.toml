@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 axum = { version = "0.8", features = ["json", "http1", "tokio"] }
 tower = { version = "0.5", features = ["limit", "util"] }
-tower-http = { version = "0.6", features = ["trace", "timeout"] }
+tower-http = { version = "0.7", features = ["trace", "timeout"] }
 tokio = { version = "1", features = ["full"] }
 rdkafka = { version = "0.39", features = ["cmake-build"] }
 serde = { version = "1", features = ["derive"] }
