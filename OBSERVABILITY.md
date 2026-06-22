@@ -43,6 +43,101 @@ Prometheus runs in Docker and scrapes the host via `host.docker.internal` (see `
 | `kafka_consumer_lag_events{topic,partition,group}` | Gauge | High watermark minus committed offset (events) per partition |
 | `anomalies_detected_total{tenant_id,model_id}` | Counter | Inference latency z-score anomalies published to `ai_anomalies` |
 
+## OTel Gen AI Semantic Convention surface
+
+When a third-party integrates infra-ai-streaming via an OpenTelemetry Collector front-door, the pipeline is designed to capture the full [OTel Gen AI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) surface. The tables below define every series ID and span attribute the pipeline will track. All major providers (OpenAI, Anthropic, Azure OpenAI, Google Vertex, AWS Bedrock) emit the same `gen_ai.*` namespace.
+
+> **Status:** OTel SDK is wired (`opentelemetry = "0.32"`, `opentelemetry-otlp`). The `InferenceEvent` struct captures the underlying data. Mapping the struct fields to standardised `gen_ai.*` metric names and emitting them via the OTLP exporter is tracked as a follow-up (see `TODO: OTel semconv metric emission` in `ingestion/src/`).
+
+### Metric series
+
+| Series ID | Type | Unit | Key labels | Maps to |
+|---|---|---|---|---|
+| `gen_ai.client.operation.duration` | Histogram | seconds | `gen_ai.system`, `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.response.model`, `error.type`, `server.address` | `latency_ms` |
+| `gen_ai.client.token.usage` | Counter | tokens | `gen_ai.system`, `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.token.type` (input/output) | `prompt_tokens` + `completion_tokens` |
+| `gen_ai.server.request.duration` | Histogram | seconds | same as operation.duration | `latency_ms` (server-side) |
+| `gen_ai.server.time_to_first_token` | Histogram | seconds | `gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `server.address` | `prefill_latency_ms` |
+| `gen_ai.server.time_per_output_token` | Histogram | seconds | same | `decode_latency_ms` (per-token) |
+
+### Span attributes — provider identity
+
+| Attribute | Example values |
+|---|---|
+| `gen_ai.system` | `openai` / `anthropic` / `azure.openai` / `vertex_ai` / `aws.bedrock` |
+| `server.address` | `api.openai.com` / `api.anthropic.com` |
+| `server.port` | `443` |
+
+### Span attributes — request
+
+| Attribute | Example |
+|---|---|
+| `gen_ai.operation.name` | `chat` / `embeddings` / `completions` / `create_agent` / `execute_tool` |
+| `gen_ai.request.model` | `gpt-4o` / `claude-sonnet-4-6` / `gemini-2.0-flash` |
+| `gen_ai.request.max_tokens` | `4096` |
+| `gen_ai.request.temperature` | `0.7` |
+| `gen_ai.request.top_p` | `0.9` |
+| `gen_ai.request.top_k` | `40` |
+| `gen_ai.request.seed` | `42` |
+| `gen_ai.request.frequency_penalty` | `0.5` |
+| `gen_ai.request.presence_penalty` | `0.2` |
+| `gen_ai.request.stop_sequences` | `["###", "<end>"]` |
+
+### Span attributes — response
+
+| Attribute | Example | Maps to |
+|---|---|---|
+| `gen_ai.response.model` | `gpt-4o-2024-08-06` | `resolved_model_id` (via flagd model resolver) |
+| `gen_ai.response.id` | `chatcmpl-abc123` | `request_id` |
+| `gen_ai.response.finish_reasons` | `["stop"]` / `["length"]` / `["tool_calls"]` / `["content_filter"]` | `status` |
+| `gen_ai.usage.input_tokens` | `1024` | `prompt_tokens` |
+| `gen_ai.usage.output_tokens` | `256` | `completion_tokens` |
+| `gen_ai.usage.total_tokens` | `1280` | `prompt_tokens + completion_tokens` |
+
+### Span attributes — errors
+
+| Attribute | Example values |
+|---|---|
+| `error.type` | `rate_limit_exceeded` / `context_length_exceeded` / `model_not_found` / `timeout` / `content_filter` |
+
+### Span attributes — agents (OTel Gen AI stable, 2024)
+
+| Attribute | Example |
+|---|---|
+| `gen_ai.agent.id` | `agent-xyz-001` |
+| `gen_ai.agent.name` | `SupportAgent` |
+| `gen_ai.agent.description` | `Customer support triage agent` |
+| `gen_ai.tool.name` | `search_orders` / `send_email` |
+| `gen_ai.tool.description` | `Looks up order status by ID` |
+| `gen_ai.tool.call.id` | `call_abc123` |
+
+### Span events (opt-in — not stored in hot pipeline by default)
+
+| Event name | When emitted |
+|---|---|
+| `gen_ai.system.message` | System prompt captured |
+| `gen_ai.user.message` | User turn |
+| `gen_ai.assistant.message` | Model response turn |
+| `gen_ai.tool.message` | Tool/function return value |
+| `gen_ai.choice` | Streaming chunk or final choice |
+
+> Raw prompt and completion text is **not** stored in the hot pipeline by design (privacy, retention cost, compliance). These span events are part of the spec but require an explicit opt-in consent-scoped path. See `DESIGN.md §1` non-goals.
+
+### Current capture status
+
+| Series / attribute | Captured | Where |
+|---|---|---|
+| `ingestion_latency_ms` → `gen_ai.client.operation.duration` | data ✅, OTel name ❌ | `ingestion/src/metrics.rs` |
+| `prompt_tokens` → `gen_ai.usage.input_tokens` | data ✅, OTel name ❌ | `ingestion/src/handlers/event.rs` |
+| `completion_tokens` → `gen_ai.usage.output_tokens` | data ✅, OTel name ❌ | same |
+| `prefill_latency_ms` → `gen_ai.server.time_to_first_token` | data ✅, OTel name ❌ | same |
+| `decode_latency_ms` → `gen_ai.server.time_per_output_token` | data ✅, OTel name ❌ | same |
+| `resolved_model_id` → `gen_ai.response.model` | data ✅, OTel name ❌ | `ingestion/src/model_resolver.rs` |
+| `status` → `gen_ai.response.finish_reasons` | partial ✅ | ClickHouse schema |
+| `error_code` → `error.type` | data ✅, OTel name ❌ | ClickHouse schema |
+| `gen_ai.system` | ❌ not captured yet | needs provider field on `InferenceEvent` |
+| `gen_ai.operation.name` | ❌ not captured yet | needs operation field on `InferenceEvent` |
+| Agent attributes (`gen_ai.agent.*`, `gen_ai.tool.*`) | ❌ not captured yet | future agent tracing path |
+
 ## Circuit breaker
 
 - **5** consecutive insert failures → **open** (skip CH, push to Redis overflow).
