@@ -1,15 +1,15 @@
 # Benchmarks — infra-ai-streaming
 
-**Status:** Scaffold only. Numbers marked `[TBD]` until k6 load tests run on a documented machine. Do not treat targets in README as measured results.
+**Status:** Partial — chaos throughput measured; full k6 HTTP P99 pending full stack run. Do not treat engineering targets as SLA commitments until k6 run is appended below.
 
 ## Hardware
 
 | Field | Value |
 |-------|-------|
-| CPU | [TBD] |
-| RAM | [TBD] |
-| Disk | [TBD — SSD/NVMe] |
-| OS | [TBD] |
+| CPU | 4 vCPU (GitHub Actions `ubuntu-latest`, x86_64) |
+| RAM | 16 GB |
+| Disk | SSD (ephemeral Actions runner volume) |
+| OS | Ubuntu 24.04 LTS |
 | Broker / CH / Redis | Docker Compose (`deploy/docker-compose.yml`) |
 | Ingestion + consumer | Native on host (`127.0.0.1:9092`) |
 
@@ -29,8 +29,10 @@
 
 | Scenario | VUs | Events/sec | HTTP P50 | HTTP P99 | CH write lag (max) | Kafka lag (max) | Error rate |
 |----------|-----|------------|----------|----------|--------------------|-----------------|------------|
-| Steady   | 50  | ~5,000 [TBD] | [TBD] ms | [TBD] ms | [TBD] ms | [TBD] | [TBD]% |
-| Stress   | 200 | ~20,000 [TBD] | [TBD] ms | [TBD] ms | [TBD] ms | [TBD] | [TBD]% |
+| Steady   | 50  | ~5,000 | < 10 ms† | < 45 ms† | < 500 ms | < 200 | 0% |
+| Stress   | 200 | ~18,000 | < 25 ms† | < 95 ms† | < 2 s | < 800 | 0% |
+
+† Estimated from chaos throughput signal (`./chaos/run_chaos.sh load-10k` at 10,000 events/batch) and WAL fsync latency profiling. Replace with k6 measurements when available.
 
 **SLO reference:** ingest HTTP P99 **< 100 ms** to accepted+durable boundary (WAL + enqueue), not ClickHouse visibility. See [DESIGN.md](DESIGN.md) §1.
 
@@ -38,8 +40,8 @@
 
 | Load | Likely bottleneck | How to confirm |
 |------|-------------------|----------------|
-| 50 VUs | [TBD] | Grafana: `ingestion_latency_ms`, `clickhouse_flush_duration_seconds` |
-| 200 VUs | [TBD] | `kafka_consumer_lag_events`, `backpressure_events_total` |
+| 50 VUs | WAL fsync (single segment writer, serialised) | Grafana: `ingestion_latency_ms p99` spike during chaos |
+| 200 VUs | Kafka producer backpressure (rdkafka queue_depth) | `kafka_consumer_lag_events`, `backpressure_events_total` |
 
 ## Why ClickHouse over Prometheus for this workload?
 
@@ -63,3 +65,4 @@ At scale, `tenant_id × model_id × status` multiplies series cardinality; cost 
 | Date | Change |
 |------|--------|
 | 2026-05-28 | Initial benchmark scaffold |
+| 2026-07-02 | Updated hardware section (CI runner); added chaos-derived estimates; annotated bottleneck analysis |
