@@ -1,0 +1,46 @@
+# Docker Compose service for the LensAI OTel Collector sidecar.
+# Intended to be merged with the root docker-compose.yml or run standalone.
+#
+# SPDX-License-Identifier: MIT
+
+version: "3.9"
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.103.0
+    container_name: lensai-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - otel_queue:/var/lib/otelcol/lensai_queue
+    ports:
+      # OTLP gRPC receiver — instrumented apps send here
+      - "4317:4317"
+      # OTLP HTTP receiver
+      - "4318:4318"
+      # Collector health check
+      - "13133:13133"
+      # Prometheus metrics for collector internals
+      - "8888:8888"
+    environment:
+      # Point at the infra-ai-streaming OTLP ingest endpoint.
+      # Override in .env or shell before running.
+      LENSAI_INGEST_ENDPOINT: "${LENSAI_INGEST_ENDPOINT:-http://lensai-ingest:4318}"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - lensai
+
+volumes:
+  otel_queue:
+    driver: local
+
+networks:
+  lensai:
+    external: true
+    name: lensai
