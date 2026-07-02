@@ -1,0 +1,103 @@
+# LensAI OpenTelemetry Collector configuration
+# Receives OTLP spans from any instrumented application and forwards
+# them to the infra-ai-streaming ingest endpoint.
+#
+# SPDX-License-Identifier: MIT
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - "*"
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+  batch:
+    timeout: 200ms
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+  # Map OpenTelemetry Gen-AI semantic conventions to LensAI schema.
+  # Spec: https://opentelemetry.io/docs/specs/semconv/gen-ai/
+  transform/lensai_schema:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          # model_id: what the application requested
+          - set(attributes["lensai.model_id"],
+                attributes["gen_ai.request.model"])
+            where attributes["gen_ai.request.model"] != nil
+          # resolved_model_id: what actually ran (canary / flag-evaluated checkpoint)
+          - set(attributes["lensai.resolved_model_id"],
+                attributes["gen_ai.response.model"])
+            where attributes["gen_ai.response.model"] != nil
+          # token counts
+          - set(attributes["lensai.input_tokens"],
+                attributes["gen_ai.usage.input_tokens"])
+            where attributes["gen_ai.usage.input_tokens"] != nil
+          - set(attributes["lensai.output_tokens"],
+                attributes["gen_ai.usage.output_tokens"])
+            where attributes["gen_ai.usage.output_tokens"] != nil
+          # provider (openai / anthropic / bedrock / etc.)
+          - set(attributes["lensai.provider"],
+                attributes["gen_ai.system"])
+            where attributes["gen_ai.system"] != nil
+          # latency from span duration
+          - set(attributes["lensai.latency_ms"],
+                Duration(end_time) - Duration(start_time))
+
+exporters:
+  # Forward to infra-ai-streaming ingest service.
+  # Set LENSAI_INGEST_ENDPOINT in environment (default: local compose stack).
+  otlphttp/lensai:
+    endpoint: "${env:LENSAI_INGEST_ENDPOINT}"
+    tls:
+      insecure: false
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 1000
+      storage: file_storage/lensai_queue
+
+  # Debug exporter — disable in production by removing from pipeline.
+  debug:
+    verbosity: basic
+
+extensions:
+  file_storage/lensai_queue:
+    directory: /var/lib/otelcol/lensai_queue
+    timeout: 10s
+
+service:
+  extensions: [health_check, pprof, file_storage/lensai_queue]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, transform/lensai_schema]
+      exporters: [otlphttp/lensai, debug]
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888
