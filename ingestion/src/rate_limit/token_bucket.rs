@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Per-tenant distributed token bucket using Redis + Lua.
 
 use anyhow::Context;

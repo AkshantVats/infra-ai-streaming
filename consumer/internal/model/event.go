@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 package model
 
 // InferenceEvent matches the Rust ingestion schema (ingestion/src/handlers/ingest.rs).

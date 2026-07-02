@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package buildinfo holds linker-injected build metadata.
 package buildinfo
 

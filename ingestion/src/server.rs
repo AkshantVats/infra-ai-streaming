@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Axum router, middleware, and HTTP server lifecycle.
 
 use std::net::SocketAddr;
