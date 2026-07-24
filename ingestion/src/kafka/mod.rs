@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Kafka producer for the ingest hot path (delivery-confirmed WAL ack).
 
 pub mod producer;

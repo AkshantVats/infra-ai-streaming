@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! `POST /ingest` — validate, rate-limit, WAL append, enqueue for Kafka.
 
 use std::sync::Arc;

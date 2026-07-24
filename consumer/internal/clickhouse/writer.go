@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package clickhouse batches inference events and inserts them with breaker and overflow handoff.
 package clickhouse
 

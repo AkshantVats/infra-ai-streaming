@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Async Kafka producer: WAL entries are acked only after broker delivery confirmation.
 
 use std::sync::Arc;

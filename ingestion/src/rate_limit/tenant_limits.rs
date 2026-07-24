@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Per-tenant rate-limit configuration loaded from a JSON file.
 //!
 //! Schema: `deploy/tenant-limits.example.json`. Unknown tenants fall back to

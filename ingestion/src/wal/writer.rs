@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Segment WAL: newline JSON `WalEntry` per line, fsync after each append.
 
 use std::fs::{self, File, OpenOptions};

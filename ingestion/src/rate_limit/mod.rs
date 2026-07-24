@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Distributed per-tenant rate limiting (Redis token bucket).
 
 pub mod tenant_limits;

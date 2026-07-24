@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Compile-time build metadata (see `build.rs`).
 
 /// Crate version from `Cargo.toml`.

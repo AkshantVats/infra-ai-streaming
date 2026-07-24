@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! HTTP handlers for the ingestion API.
 
 pub mod event;

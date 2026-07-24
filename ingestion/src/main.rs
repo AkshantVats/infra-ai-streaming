@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Ingestion engine binary: WAL + Kafka + HTTP `/ingest`.
 
 use std::sync::Arc;

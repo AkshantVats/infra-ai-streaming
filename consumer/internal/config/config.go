@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package config loads consumer settings from environment variables.
 package config
 

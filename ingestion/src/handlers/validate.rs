@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Batch validation and normalization before durable writes.
 
 use axum::http::StatusCode;

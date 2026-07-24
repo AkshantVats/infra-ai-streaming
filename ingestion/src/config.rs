@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Environment-backed configuration for the ingestion service.
 //!
 //! Variable names and local-dev placeholders are listed in `deploy/.env.example`

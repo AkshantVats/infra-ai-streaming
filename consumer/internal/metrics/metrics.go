@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package metrics exposes Prometheus instrumentation for the consumer.
 package metrics
 

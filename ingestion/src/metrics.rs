@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Prometheus metrics for the ingestion process (scrape via `/metrics` in a later binary).
 
 use lazy_static::lazy_static;

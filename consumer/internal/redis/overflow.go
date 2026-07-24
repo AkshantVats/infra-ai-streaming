@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package redis provides a LIST-backed overflow buffer when ClickHouse is degraded.
 package redis
 
