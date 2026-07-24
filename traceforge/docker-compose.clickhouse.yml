@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+# Overlay for local ClickHouse development
+# Usage: docker-compose -f docker-compose.yml -f traceforge/docker-compose.clickhouse.yml up
+version: "3.9"
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./clickhouse/trace_cost_rollup.sql:/docker-entrypoint-initdb.d/02-rollup.sql
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  clickhouse-data:
