@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+# Compose overlay: adds TraceForge collector, migrator, and ingest services
+# to the base LensAI quickstart.
+#
+# Usage:
+#   docker compose \
+#     --env-file deploy/.env \
+#     -f deploy/docker-compose.yml \
+#     -f deploy/compose/traceforge-overlay.yml \
+#     up -d
+
+name: infra-ai-streaming
+
+services:
+  traceforge-collector:
+    image: otel/opentelemetry-collector-contrib:0.100.0
+    command:
+      - "--config=/etc/otel/config.yaml"
+      - "--config=/etc/otel/traceforge-config.yaml"
+    volumes:
+      - ../otel-collector/config.yaml:/etc/otel/config.yaml:ro
+      - ../otel/traceforge-config.yaml:/etc/otel/traceforge-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    environment:
+      KAFKA_BROKERS: "redpanda:9092"
+      CLICKHOUSE_HOST: "clickhouse"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
+  traceforge-migrator:
+    image: clickhouse/clickhouse-server:24.3
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        clickhouse-client --host clickhouse --port 9000 --user default \
+          --multiquery < /migrations/002_agent_spans.sql
+    volumes:
+      - ../clickhouse/002_agent_spans.sql:/migrations/002_agent_spans.sql:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: "no"
+
+  traceforge-ingest:
+    build:
+      context: ..
+      dockerfile: traceforge/Dockerfile
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "traceforge-collector:4317"
+      LISTEN_ADDR: ":8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - traceforge-collector
+    restart: unless-stopped

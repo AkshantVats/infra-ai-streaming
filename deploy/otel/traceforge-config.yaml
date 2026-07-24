@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: MIT
+# OTel Collector config for the TraceForge agent span pipeline.
+# Receives spans from the TraceForge ingest service via gRPC OTLP,
+# plus directly from any instrumented agent via HTTP OTLP (port 4318).
+# Processors batch and annotate. Exporters dual-sink to ClickHouse and Kafka.
+#
+# Usage: place alongside the LensAI collector config and run with:
+#   --config=deploy/otel-collector/config.yaml
+#   --config=deploy/otel/traceforge-config.yaml
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13134  # Separate port to avoid clash with LensAI collector
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  kafka:
+    brokers:
+      - ${env:KAFKA_BROKERS}
+    topic: agent.spans.v1
+    encoding: otlp_proto
+    group_id: otel-collector-traceforge
+
+processors:
+  batch:
+    send_batch_size: 256
+    timeout: 2s
+
+  attributes/traceforge:
+    actions:
+      - key: pipeline.version
+        value: "1"
+        action: insert
+      - key: service.team
+        value: "traceforge"
+        action: insert
+
+exporters:
+  clickhouse:
+    endpoint: tcp://${env:CLICKHOUSE_HOST}:9000
+    database: lensai
+    traces_table_name: agent_spans
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 120s
+
+  kafka:
+    brokers:
+      - ${env:KAFKA_BROKERS}
+    topic: agent.spans.v1
+    encoding: otlp_proto
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp, kafka]
+      processors: [attributes/traceforge, batch]
+      exporters: [clickhouse, kafka]
