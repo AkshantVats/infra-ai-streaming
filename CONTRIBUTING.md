@@ -66,6 +66,29 @@ go run ./consumer/cmd/consumer
 
 Or [`scripts/smoke-e2e.sh`](scripts/smoke-e2e.sh) after Compose is up.
 
+## TraceForge Go SDK (`traceforge/sdk/go/`)
+
+The Go SDK is a self-contained module (`github.com/akshantvats/traceforge-go`). It lives under
+`traceforge/sdk/go/` and has no dependency on the Rust ingestion layer.
+
+**Test and lint:**
+
+```bash
+cd traceforge/sdk/go
+go test ./...           # unit tests
+go test -race ./...     # race-detector pass (required before PR)
+go vet ./...            # static analysis
+gofmt -l .              # formatting — must produce no output
+```
+
+**Architecture note:** `emit.go` uses a `sync.Once` singleton for the Kafka client so that the
+goroutine pool is shared across all spans in a process rather than spawning one client per span.
+HTTP emission goes to `TRACEFORGE_COLLECTOR_URL` (default `localhost:8080/v1/spans`); Kafka
+production is skipped when `TRACEFORGE_KAFKA_BROKERS` is unset.
+
+**Adding a new span attribute:** add the field to `Span` in `span.go` with the correct JSON tag,
+update `StartSpan` or `EndSpan` in `tracer.go`, and add a test case in `tracer_test.go`.
+
 ## Build metadata
 
 `/health` on ingestion (`:8080`) and consumer (`:9091`) returns `version`, `git_sha`, and `build_time`. Docker builds accept `GIT_SHA` and `BUILD_TIME` build-args (see [RELEASE.md](RELEASE.md)).
