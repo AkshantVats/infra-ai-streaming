@@ -54,3 +54,5 @@ load-test/results/
 # Docker Compose overrides (local)
 docker-compose.override.yml
 **/docker-compose.override.yml
+__pycache__/
+*.pyc
