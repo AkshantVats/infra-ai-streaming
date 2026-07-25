@@ -1,0 +1,150 @@
+{
+  "title": "TraceForge — Agent Waterfall",
+  "uid": "traceforge-waterfall-v1",
+  "schemaVersion": 38,
+  "version": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "tags": ["traceforge", "ai-inference", "observability"],
+  "templating": {
+    "list": [
+      {
+        "name": "trace_id",
+        "type": "textbox",
+        "label": "Trace ID",
+        "description": "Paste a trace ID to inspect the full span waterfall",
+        "current": { "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Span Waterfall — ${trace_id}",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 12 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "options": {
+        "sortBy": [{ "displayName": "start_time", "desc": false }],
+        "footer": { "show": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "minWidth": 80 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "latency_ms" },
+            "properties": [
+              { "id": "displayName", "value": "Latency (ms)" },
+              { "id": "custom.width", "value": 120 },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500}, {"color": "red", "value": 2000}] } },
+              { "id": "custom.displayMode", "value": "color-background" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              { "id": "mappings", "value": [{"type": "value", "options": {"ERROR": {"color": "red", "text": "ERROR"}, "OK": {"color": "green", "text": "OK"}}}] }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT start_time, span_id, parent_span_id, tool_name, tool_kind, model, status, latency_ms, total_tokens, cost_usd, error_message FROM agent_spans WHERE trace_id = '${trace_id}' ORDER BY start_time ASC",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Total Cost (USD)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 12, "w": 6, "h": 4 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT sumMerge(cost_usd) AS cost FROM trace_cost_rollup WHERE trace_id = '${trace_id}' GROUP BY trace_id",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Total Tokens",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 12, "w": 6, "h": 4 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT sumMerge(total_tokens) AS tokens FROM trace_cost_rollup WHERE trace_id = '${trace_id}' GROUP BY trace_id",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Span Count",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 12, "w": 6, "h": 4 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT sumMerge(span_count) AS spans FROM trace_cost_rollup WHERE trace_id = '${trace_id}' GROUP BY trace_id",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Error Count",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 12, "w": 6, "h": 4 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "options": {
+        "colorMode": "value",
+        "thresholds": { "mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}] }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT sumMerge(error_count) AS errors FROM trace_cost_rollup WHERE trace_id = '${trace_id}' GROUP BY trace_id",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Slowest Spans (Global)",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "options": { "sortBy": [{ "displayName": "latency_ms", "desc": true }] },
+      "targets": [
+        {
+          "rawSql": "SELECT trace_id, span_id, tool_name, latency_ms, cost_usd FROM agent_spans ORDER BY latency_ms DESC LIMIT 20",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Error Rate by Tool (Last Hour)",
+      "type": "barchart",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT tool_name, countIf(status = 'ERROR') AS errors, count() AS total, round(100.0 * countIf(status = 'ERROR') / count(), 2) AS error_pct FROM agent_spans WHERE start_time >= now() - INTERVAL 1 HOUR GROUP BY tool_name ORDER BY error_pct DESC",
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}
