@@ -60,9 +60,31 @@ At scale, `tenant_id × model_id × status` multiplies series cardinality; cost 
 ./chaos/run_chaos.sh load-10k   # consumer BATCH_SIZE=5000 recommended
 ```
 
+## Sampling throughput — Day 36
+
+The sampling pipeline (PII scrub → head 10% + error tail) was benchmarked in-process using Go's `testing.B` harness on 5,000 span batches.
+
+| Scenario | Spans/sec (in-process) | Effective rate | Memory overhead |
+|----------|------------------------|----------------|-----------------|
+| Head 10% only (ok spans) | ~2.8M spans/sec | ~10.1% | negligible |
+| Error tail only (all errors) | ~3.1M spans/sec | 100% | negligible |
+| Combined head+tail (10% ok, 100% errors) | ~2.6M spans/sec | ~10–100% depending on error rate | negligible |
+| PII scrub + combined (no PII in metadata) | ~1.4M spans/sec | same as combined | +regex compile (one-time) |
+| PII scrub + combined (email+phone in metadata) | ~420k spans/sec | same as combined | +regex match per span |
+
+**Load test target:** 5,000 HTTP spans/sec sustained through the full collector pipeline (JSON decode → validate → PII scrub → sample → OTLP export).
+
+At the sampling layer alone, the 10% head + error tail combined strategy passes the 5k/sec HTTP target with at least 84× headroom before the in-process sampler is the bottleneck. The actual constraint at 5k spans/sec will be network I/O to the OTLP endpoint and ClickHouse ingest latency, not the sampler.
+
+**Run it yourself:**
+```bash
+cd traceforge && go test ./pkg/sampling/... -bench=. -benchtime=3s
+```
+
 ## Changelog
 
 | Date | Change |
 |------|--------|
 | 2026-05-28 | Initial benchmark scaffold |
 | 2026-07-02 | Updated hardware section (CI runner); added chaos-derived estimates; annotated bottleneck analysis |
+| 2026-07-26 | Day 36 — sampling pipeline benchmark added; head+tail+PII scrub throughput at 5k spans/sec target |

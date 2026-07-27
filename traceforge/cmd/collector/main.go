@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Package main implements the TraceForge ingest server.
-// It accepts POST /v1/spans (JSON array of schema.Span) and forwards the spans
-// to a downstream OTel Collector via gRPC OTLP.
+// It accepts POST /v1/spans (JSON array of schema.Span), applies PII scrubbing
+// and head+tail sampling, then forwards surviving spans to a downstream OTel
+// Collector via gRPC OTLP.
 package main
 
 import (
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AkshantVats/infra-ai-streaming/traceforge/pkg/export"
+	"github.com/AkshantVats/infra-ai-streaming/traceforge/pkg/sampling"
 	"github.com/AkshantVats/infra-ai-streaming/traceforge/pkg/schema"
 )
 
@@ -29,9 +31,14 @@ func main() {
 	}
 	defer exporter.Close()
 
+	scrubber := &sampling.PIIScrubber{}
+	sampler := sampling.DefaultCombined()
+	var stats sampling.Stats
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/spans", makeSpanHandler(ctx, exporter))
+	mux.HandleFunc("POST /v1/spans", makeSpanHandler(ctx, exporter, scrubber, sampler, &stats))
 	mux.HandleFunc("GET /healthz", healthHandler)
+	mux.HandleFunc("GET /metrics/sampling", makeSamplingMetricsHandler(&stats))
 
 	srv := &http.Server{
 		Addr:         listenAddr,
@@ -40,14 +47,24 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	slog.Info("traceforge collector listening", "addr", listenAddr, "otlp", otlpEndpoint)
+	slog.Info("traceforge collector listening",
+		"addr", listenAddr,
+		"otlp", otlpEndpoint,
+		"sampling", "head=10% tail=errors",
+	)
 	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
 }
 
-func makeSpanHandler(ctx context.Context, exporter *export.SpanExporter) http.HandlerFunc {
+func makeSpanHandler(
+	ctx context.Context,
+	exporter *export.SpanExporter,
+	scrubber *sampling.PIIScrubber,
+	sampler sampling.Sampler,
+	stats *sampling.Stats,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var spans []schema.Span
 		if err := json.NewDecoder(r.Body).Decode(&spans); err != nil {
@@ -62,7 +79,14 @@ func makeSpanHandler(ctx context.Context, exporter *export.SpanExporter) http.Ha
 			}
 		}
 
-		if err := exporter.Export(ctx, spans); err != nil {
+		// Scrub PII and apply head+tail sampling before exporting.
+		filtered := sampling.ScrubAndFilter(scrubber, sampler, spans, stats)
+		if len(filtered) == 0 {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if err := exporter.Export(ctx, filtered); err != nil {
 			slog.Error("OTLP export failed", "err", err)
 			http.Error(w, "export error", http.StatusInternalServerError)
 			return
@@ -74,6 +98,16 @@ func makeSpanHandler(ctx context.Context, exporter *export.SpanExporter) http.Ha
 
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+// makeSamplingMetricsHandler exposes sampling counters for Prometheus scrape.
+func makeSamplingMetricsHandler(stats *sampling.Stats) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		fmt.Fprintf(w, "traceforge_spans_kept_total %d\n", stats.Kept())
+		fmt.Fprintf(w, "traceforge_spans_dropped_total %d\n", stats.Dropped())
+		fmt.Fprintf(w, "traceforge_sampling_effective_rate %.4f\n", stats.EffectiveRate())
+	}
 }
 
 func getenv(key, fallback string) string {
