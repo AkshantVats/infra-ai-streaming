@@ -1,0 +1,6 @@
+{
+  "type": "AgentAction",
+  "tool": "search_web",
+  "tool_input": {"query": "kafka partition strategy for high cardinality keys"},
+  "log": "Invoking: search_web with {'query': 'kafka partition strategy for high cardinality keys'}"
+}
