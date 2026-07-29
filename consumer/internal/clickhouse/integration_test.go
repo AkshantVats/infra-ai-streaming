@@ -142,7 +142,7 @@ func TestCircuitBreakerOpensAndOverflows(t *testing.T) {
 	ctx := context.Background()
 	overflow := &mockOverflow{}
 	cfg := testConfig(realDSN)
-	cfg.CBFailures = 1   // open after first failure
+	cfg.CBFailures = 1 // open after first failure
 	cfg.InsertRetries = 1
 	cfg.BatchSize = 1
 

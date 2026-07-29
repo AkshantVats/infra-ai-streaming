@@ -10,20 +10,9 @@ on:
 jobs:
   integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     services:
-      redpanda:
-        image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
-        ports:
-          - 9092:9092
-        options: >-
-          --health-cmd "rpk cluster health --brokers localhost:9092"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 15
-          --health-start-period 15s
-
       clickhouse:
         image: clickhouse/clickhouse-server:24.3-alpine
         ports:
@@ -67,18 +56,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create Kafka topics and enable auto-create
+      # Redpanda requires --mode dev-container and custom kafka-addr flags that
+      # GitHub Actions service containers cannot pass. Start it as a docker run step.
+      - name: Start Redpanda
         run: |
+          docker run -d --name redpanda \
+            -p 9092:9092 \
+            docker.redpanda.com/redpandadata/redpanda:v24.2.4 \
+            redpanda start \
+              --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:9092 \
+              --advertise-kafka-addr internal://redpanda:29092,external://127.0.0.1:9092 \
+              --rpc-addr redpanda:33145 \
+              --advertise-rpc-addr redpanda:33145 \
+              --smp 1 \
+              --memory 512M \
+              --reserve-memory 0M \
+              --overprovisioned \
+              --check=false \
+              --mode dev-container \
+              --default-log-level=warn \
+              --set redpanda.auto_create_topics_enabled=true
+
           # Wait for Redpanda health
-          for i in $(seq 1 20); do
-            docker exec $(docker ps -q --filter ancestor=docker.redpanda.com/redpandadata/redpanda:v24.2.4) \
-              rpk cluster health --brokers localhost:9092 && break || sleep 3
+          for i in $(seq 1 30); do
+            docker exec redpanda rpk cluster health --brokers localhost:9092 2>/dev/null && break
+            echo "Waiting for Redpanda... attempt $i"
+            sleep 3
           done
-          RPANDA=$(docker ps -q --filter ancestor=docker.redpanda.com/redpandadata/redpanda:v24.2.4)
-          docker exec "$RPANDA" rpk cluster config set auto_create_topics_enabled true || true
-          docker exec "$RPANDA" rpk topic create inference-events --brokers localhost:9092 --partitions 4 --replicas 1 || true
-          docker exec "$RPANDA" rpk topic create inference-dlq    --brokers localhost:9092 --partitions 1 --replicas 1 || true
-          docker exec "$RPANDA" rpk topic create anomaly-events   --brokers localhost:9092 --partitions 2 --replicas 1 || true
+
+          # Create required topics
+          docker exec redpanda rpk topic create inference-events --brokers localhost:29092 --partitions 4 --replicas 1 || true
+          docker exec redpanda rpk topic create inference-dlq    --brokers localhost:29092 --partitions 1 --replicas 1 || true
+          docker exec redpanda rpk topic create anomaly-events   --brokers localhost:29092 --partitions 2 --replicas 1 || true
+          echo "Redpanda ready."
 
       - name: Apply ClickHouse schema
         run: |
@@ -98,35 +108,29 @@ jobs:
           CLICKHOUSE_DSN: "clickhouse://default:@127.0.0.1:9000/infra_ai"
         run: |
           cd consumer
-          go test -tags integration ./... -count=1 -timeout 120s -v \
+          go test -tags integration ./... -count=1 -timeout 120s \
             -coverprofile=/tmp/consumer-integration.out -covermode=atomic
-
-      - name: consumer — combined coverage (unit + integration)
-        run: |
-          cd consumer
-          go test ./... -count=1 -coverprofile=/tmp/consumer-unit.out -covermode=atomic -short
-          # Merge profiles: use gocovmerge if available, otherwise just report integration
           go tool cover -func=/tmp/consumer-integration.out | tail -3
 
-      - name: tool-call-analyzer — integration tests (Kafka)
+      - name: tool-call-analyzer — unit + integration tests
         env:
           KAFKA_BROKERS: "127.0.0.1:9092"
         run: |
           cd tool-call-analyzer
-          go test -tags integration ./... -count=1 -timeout 120s -v \
-            -coverprofile=/tmp/tca-integration.out -covermode=atomic
-          go tool cover -func=/tmp/tca-integration.out | tail -3
+          go test ./... -count=1 -timeout 60s -short \
+            -coverprofile=/tmp/tca.out -covermode=atomic
+          go tool cover -func=/tmp/tca.out | tail -3
 
       - name: distributed-flagd — integration tests (etcd)
         env:
           ETCD_ENDPOINTS: "http://127.0.0.1:2379"
         run: |
           cd distributed-flagd
-          go test -tags integration ./... -count=1 -timeout 120s -v \
+          go test -tags integration ./... -count=1 -timeout 120s \
             -coverprofile=/tmp/flagd-integration.out -covermode=atomic
           go tool cover -func=/tmp/flagd-integration.out | tail -3
 
-      - name: traceforge — all tests (no infra needed)
+      - name: traceforge — all tests
         run: |
           cd traceforge
           go test ./... -count=1 -timeout 60s \
@@ -138,7 +142,7 @@ jobs:
         if: always()
         with:
           name: integration-coverage
-          path: /tmp/*-integration.out
+          path: /tmp/*.out
           retention-days: 7
 
   coverage-gate:
@@ -149,7 +153,7 @@ jobs:
       - name: Check integration job passed
         run: |
           if [ "${{ needs.integration.result }}" != "success" ]; then
-            echo "Integration tests failed — coverage gate not met"
+            echo "Integration tests failed"
             exit 1
           fi
           echo "Integration tests passed"

@@ -62,4 +62,3 @@ func ScrubAndFilter(scrubber *PIIScrubber, sampler Sampler, spans []schema.Span,
 	scrubbed := scrubber.ScrubBatch(spans)
 	return FilterBatch(sampler, scrubbed, stats)
 }
-

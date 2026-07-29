@@ -64,6 +64,11 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     volumes:
       - ./deploy/clickhouse:/docker-entrypoint-initdb.d:ro
+    # M1/8GB RAM: cap ClickHouse memory usage
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 5s

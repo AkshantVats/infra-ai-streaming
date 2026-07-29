@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/IBM/sarama"
 	"github.com/AkshantVats/tool-call-analyzer/pkg/types"
+	"github.com/IBM/sarama"
 )
 
 const DefaultTopic = "tools.normalized.v1"

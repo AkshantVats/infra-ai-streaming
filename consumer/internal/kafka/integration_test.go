@@ -157,7 +157,9 @@ func TestReaderRunConsumesMessage(t *testing.T) {
 	}
 }
 
-func contains(s, sub string) bool { return len(s) >= len(sub) && (s == sub || len(sub) == 0 || containsStr(s, sub)) }
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || containsStr(s, sub))
+}
 func containsStr(s, sub string) bool {
 	for i := range len(s) - len(sub) + 1 {
 		if s[i:i+len(sub)] == sub {
