@@ -155,4 +155,3 @@ func DefaultCombined() *CombinedSampler {
 		Tail: &ErrorTailSampler{},
 	}
 }
-

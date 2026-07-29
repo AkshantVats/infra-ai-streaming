@@ -191,3 +191,193 @@ func TestConvertToResourceSpans_Timestamps(t *testing.T) {
 		t.Errorf("end time: got %d, want %d", ospan.EndTimeUnixNano, expectedEnd)
 	}
 }
+
+// TestConvertToResourceSpans_StatusRetry verifies that StatusRetry maps to UNSET status code
+// (it is not in the StatusError/StatusTimeout/StatusCancelled group in buildStatus).
+func TestConvertToResourceSpans_StatusRetry(t *testing.T) {
+	span := schema.Span{
+		TraceID:   "4bf92f3577b34da6a3ce929d0e0e4736",
+		SpanID:    "00f067aa0ba902b7",
+		ToolName:  "api_call",
+		Status:    schema.StatusRetry,
+		LatencyMs: 500,
+		Ts:        time.Now(),
+	}
+	rs := export.ConvertToResourceSpans([]schema.Span{span})
+	ospan := rs[0].ScopeSpans[0].Spans[0]
+	if ospan.Status == nil {
+		t.Fatal("status must not be nil")
+	}
+	// StatusRetry falls to the default case → UNSET (0)
+	if int(ospan.Status.Code) != 0 {
+		t.Errorf("expected status code 0 (UNSET) for retry, got %d", ospan.Status.Code)
+	}
+}
+
+// TestConvertToResourceSpans_StatusCancelled verifies StatusCancelled maps to ERROR status.
+func TestConvertToResourceSpans_StatusCancelled(t *testing.T) {
+	msg := "cancelled by user"
+	span := schema.Span{
+		TraceID:      "4bf92f3577b34da6a3ce929d0e0e4736",
+		SpanID:       "00f067aa0ba902b7",
+		ToolName:     "llm_call",
+		Status:       schema.StatusCancelled,
+		LatencyMs:    100,
+		Ts:           time.Now(),
+		ErrorMessage: &msg,
+	}
+	rs := export.ConvertToResourceSpans([]schema.Span{span})
+	ospan := rs[0].ScopeSpans[0].Spans[0]
+	if int(ospan.Status.Code) != 2 {
+		t.Errorf("expected ERROR code for cancelled, got %d", ospan.Status.Code)
+	}
+	if ospan.Status.Message != msg {
+		t.Errorf("expected message %q, got %q", msg, ospan.Status.Message)
+	}
+}
+
+// TestConvertToResourceSpans_StatusDefault verifies an unknown status maps to UNSET.
+func TestConvertToResourceSpans_StatusUnknown(t *testing.T) {
+	span := schema.Span{
+		TraceID:   "4bf92f3577b34da6a3ce929d0e0e4736",
+		SpanID:    "00f067aa0ba902b7",
+		ToolName:  "llm_call",
+		Status:    "unknown_status",
+		LatencyMs: 100,
+		Ts:        time.Now(),
+	}
+	rs := export.ConvertToResourceSpans([]schema.Span{span})
+	ospan := rs[0].ScopeSpans[0].Spans[0]
+	if int(ospan.Status.Code) != 0 {
+		t.Errorf("expected status code 0 (UNSET) for unknown status, got %d", ospan.Status.Code)
+	}
+}
+
+// TestConvertToResourceSpans_ExecutionCategory verifies an execution tool gets INTERNAL kind.
+func TestConvertToResourceSpans_ExecutionCategory(t *testing.T) {
+	span := schema.Span{
+		TraceID:   "4bf92f3577b34da6a3ce929d0e0e4736",
+		SpanID:    "00f067aa0ba902b7",
+		ToolName:  "bash_exec", // CategoryExecution
+		Status:    schema.StatusOK,
+		LatencyMs: 200,
+		Ts:        time.Now(),
+	}
+	rs := export.ConvertToResourceSpans([]schema.Span{span})
+	if len(rs[0].ScopeSpans[0].Spans) != 1 {
+		t.Fatalf("expected 1 span")
+	}
+	ospan := rs[0].ScopeSpans[0].Spans[0]
+	// SPAN_KIND_INTERNAL = 1
+	if int(ospan.Kind) != 1 {
+		t.Errorf("expected SPAN_KIND_INTERNAL (1) for execution tool, got %d", ospan.Kind)
+	}
+}
+
+// TestConvertToResourceSpans_GenerationCategory verifies llm_call gets CLIENT kind.
+func TestConvertToResourceSpans_GenerationCategory(t *testing.T) {
+	span := schema.Span{
+		TraceID:   "4bf92f3577b34da6a3ce929d0e0e4736",
+		SpanID:    "00f067aa0ba902b7",
+		ToolName:  "llm_call", // CategoryGeneration
+		Status:    schema.StatusOK,
+		LatencyMs: 1500,
+		Ts:        time.Now(),
+	}
+	rs := export.ConvertToResourceSpans([]schema.Span{span})
+	ospan := rs[0].ScopeSpans[0].Spans[0]
+	// SPAN_KIND_CLIENT = 3
+	if int(ospan.Kind) != 3 {
+		t.Errorf("expected SPAN_KIND_CLIENT (3) for generation tool, got %d", ospan.Kind)
+	}
+}
+
+// TestConvertToResourceSpans_InvalidSpanID verifies that a malformed span_id causes the span to be skipped.
+func TestConvertToResourceSpans_InvalidSpanID(t *testing.T) {
+	span := schema.Span{
+		TraceID:   "4bf92f3577b34da6a3ce929d0e0e4736",
+		SpanID:    "INVALID", // not valid hex of length 16
+		ToolName:  "llm_call",
+		Status:    schema.StatusOK,
+		LatencyMs: 100,
+		Ts:        time.Now(),
+	}
+	rs := export.ConvertToResourceSpans([]schema.Span{span})
+	if len(rs[0].ScopeSpans[0].Spans) != 0 {
+		t.Errorf("expected 0 spans for invalid span_id, got %d", len(rs[0].ScopeSpans[0].Spans))
+	}
+}
+
+// TestConvertToResourceSpans_InvalidParentHex verifies that an invalid parent span ID is silently ignored.
+func TestConvertToResourceSpans_InvalidParentHex(t *testing.T) {
+	parentID := "ZZZZZZZZZZZZZZZZ" // not valid hex
+	span := schema.Span{
+		TraceID:      "4bf92f3577b34da6a3ce929d0e0e4736",
+		SpanID:       "00f067aa0ba902b7",
+		ParentSpanID: &parentID,
+		ToolName:     "llm_call",
+		Status:       schema.StatusOK,
+		LatencyMs:    100,
+		Ts:           time.Now(),
+	}
+	rs := export.ConvertToResourceSpans([]schema.Span{span})
+	ospan := rs[0].ScopeSpans[0].Spans[0]
+	// Invalid parent should be ignored (ParentSpanId remains nil/empty).
+	if len(ospan.ParentSpanId) != 0 {
+		t.Errorf("expected empty ParentSpanId for invalid hex, got %d bytes", len(ospan.ParentSpanId))
+	}
+}
+
+// TestConvertToResourceSpans_RetrievalCategory verifies a retrieval tool (web_search)
+// falls into the default spanKind branch and still produces a valid span.
+func TestConvertToResourceSpans_RetrievalCategory(t *testing.T) {
+	span := schema.Span{
+		TraceID:   "4bf92f3577b34da6a3ce929d0e0e4736",
+		SpanID:    "00f067aa0ba902b7",
+		ToolName:  "web_search", // CategoryRetrieval → default INTERNAL kind
+		Status:    schema.StatusOK,
+		LatencyMs: 300,
+		Ts:        time.Now(),
+	}
+	rs := export.ConvertToResourceSpans([]schema.Span{span})
+	if len(rs[0].ScopeSpans[0].Spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(rs[0].ScopeSpans[0].Spans))
+	}
+}
+
+// TestNew_Close_ErrorPath verifies New can dial and Close releases resources.
+// grpc.NewClient is lazy — it does not actually connect until the first RPC.
+func TestNew_Close_ErrorPath(t *testing.T) {
+	ctx := t.Context()
+	exp, err := export.New(ctx, "localhost:0")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := exp.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestExport_ErrorPath verifies Export returns an error when the Collector is unreachable.
+func TestExport_ErrorPath(t *testing.T) {
+	ctx := t.Context()
+	exp, err := export.New(ctx, "localhost:1") // no server on port 1
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer exp.Close() //nolint:errcheck
+
+	spans := []schema.Span{
+		{
+			TraceID:   "4bf92f3577b34da6a3ce929d0e0e4736",
+			SpanID:    "00f067aa0ba902b7",
+			ToolName:  "llm_call",
+			Status:    schema.StatusOK,
+			LatencyMs: 100,
+			Ts:        time.Now(),
+		},
+	}
+	if err := exp.Export(ctx, spans); err == nil {
+		t.Fatal("expected error when exporting to unreachable server")
+	}
+}

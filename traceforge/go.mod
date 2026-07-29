@@ -1,6 +1,6 @@
 module github.com/AkshantVats/infra-ai-streaming/traceforge
 
-go 1.22
+go 1.24
 
 require (
 	go.opentelemetry.io/proto/otlp v1.3.1

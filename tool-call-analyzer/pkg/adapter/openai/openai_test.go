@@ -74,3 +74,48 @@ func TestOpenAI_MissingName(t *testing.T) {
 		t.Errorf("expected ErrMissingField, got %v", err)
 	}
 }
+
+// TestOpenAI_CanHandle_Nil verifies CanHandle returns false for nil input.
+func TestOpenAI_CanHandle_Nil(t *testing.T) {
+	a := &oai.Adapter{}
+	if a.CanHandle(nil) {
+		t.Error("CanHandle(nil) should return false")
+	}
+}
+
+// TestOpenAI_CanHandle_InvalidJSON verifies CanHandle returns false for bad JSON.
+func TestOpenAI_CanHandle_InvalidJSON(t *testing.T) {
+	a := &oai.Adapter{}
+	if a.CanHandle([]byte(`{not-json`)) {
+		t.Error("CanHandle(invalid-json) should return false")
+	}
+}
+
+// TestOpenAI_Parse_InvalidJSON verifies Parse returns ErrUnknownFormat for bad JSON.
+func TestOpenAI_Parse_InvalidJSON(t *testing.T) {
+	a := &oai.Adapter{}
+	_, err := a.Parse([]byte(`{bad json`))
+	if err != types.ErrUnknownFormat {
+		t.Errorf("expected ErrUnknownFormat for malformed JSON, got %v", err)
+	}
+}
+
+// TestOpenAI_Vendor verifies Vendor() returns the expected string.
+func TestOpenAI_Vendor(t *testing.T) {
+	a := &oai.Adapter{}
+	if a.Vendor() != "openai" {
+		t.Errorf("Vendor() = %q, want openai", a.Vendor())
+	}
+}
+
+// TestOpenAI_Parse_NonCallPrefix verifies that a non-"call_" prefixed ID is still accepted.
+func TestOpenAI_Parse_NonCallPrefix(t *testing.T) {
+	a := &oai.Adapter{}
+	tc, err := a.Parse([]byte(`{"id":"custom_id","type":"function","function":{"name":"search_web","arguments":"{}"}}`))
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	if tc.ID != "custom_id" {
+		t.Errorf("ID = %q, want custom_id", tc.ID)
+	}
+}

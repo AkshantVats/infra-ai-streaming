@@ -228,3 +228,22 @@ func TestZScoreLatencyDetector_ThresholdInclusive(t *testing.T) {
 		t.Fatalf("ZScore = %.4f, want >= 2.0", a.ZScore)
 	}
 }
+
+// TestZScoreLatencyDetector_VarianceNegativeGuard exercises the floating-point
+// guard that clamps negative variance to zero. This can occur due to
+// accumulated floating-point rounding errors when all observed values are
+// identical large numbers: sumsq/n - (sum/n)^2 may produce a tiny negative.
+// We verify that no anomaly is flagged (std ≈ 0) even with a very high z-score
+// candidate latency.
+func TestZScoreLatencyDetector_VarianceNegativeGuard(t *testing.T) {
+	d := NewZScoreLatencyDetector(0.5, 4, 4)
+	// Use a large identical value to maximize floating-point rounding.
+	const val = uint32(1<<24 - 1) // 16777215
+	for i := 0; i < 4; i++ {
+		d.ObserveEvent(ev("t1", "m1", val, uint64(i)))
+	}
+	// Even with a wildly different latency, std should be ~0 → no anomaly.
+	if a := d.ObserveEvent(ev("t1", "m1", 1, 4)); a != nil {
+		t.Fatalf("expected no anomaly when std~0 (variance guard), got %+v", a)
+	}
+}

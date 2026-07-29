@@ -212,3 +212,49 @@ func contains(s, sub string) bool {
 			return false
 		}())
 }
+
+// TestCombinedSampler_HeadKeepsTailDrops verifies that when head keeps a span,
+// the combined sampler returns Keep even when tail would drop it.
+func TestCombinedSampler_HeadKeepsTailDrops(t *testing.T) {
+	// Rate=1.0 head keeps everything; tail drops all non-errors.
+	combined := &sampling.CombinedSampler{
+		Head: &sampling.HeadSampler{Rate: 1.0},
+		Tail: &sampling.ErrorTailSampler{},
+	}
+	okSpan := makeSpan("ok-head-trace", schema.StatusOK)
+	if combined.Sample(okSpan) != sampling.Keep {
+		t.Fatal("expected Keep when head keeps even though tail drops")
+	}
+}
+
+// TestCombinedSampler_BothDrop verifies Drop is returned only when both samplers drop.
+func TestCombinedSampler_BothDrop(t *testing.T) {
+	combined := &sampling.CombinedSampler{
+		Head: &sampling.HeadSampler{Rate: 0.0},
+		Tail: &sampling.ErrorTailSampler{},
+	}
+	okSpan := makeSpan("ok-both-drop", schema.StatusOK)
+	if combined.Sample(okSpan) != sampling.Drop {
+		t.Fatal("expected Drop when both head and tail drop")
+	}
+}
+
+// TestStats_EffectiveRate_ZeroTotal verifies EffectiveRate returns 0 when no spans recorded.
+func TestStats_EffectiveRate_ZeroTotal(t *testing.T) {
+	var st sampling.Stats
+	if st.EffectiveRate() != 0 {
+		t.Fatalf("expected 0 for empty stats, got %f", st.EffectiveRate())
+	}
+}
+
+// TestFilterBatch_NilStats verifies FilterBatch works correctly with nil stats.
+func TestFilterBatch_NilStats(t *testing.T) {
+	spans := []schema.Span{
+		makeSpan("t1", schema.StatusOK),
+		makeSpan("t2", schema.StatusError),
+	}
+	kept := sampling.FilterBatch(&sampling.ErrorTailSampler{}, spans, nil)
+	if len(kept) != 1 {
+		t.Fatalf("expected 1 kept span, got %d", len(kept))
+	}
+}

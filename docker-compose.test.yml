@@ -1,0 +1,105 @@
+# docker-compose.test.yml — minimal test stack (no Grafana/Prometheus/flagd)
+# Spins up only what integration tests need: Redpanda, ClickHouse, Redis, etcd.
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d
+#   # run integration tests
+#   docker compose -f docker-compose.test.yml down -v
+
+name: infra-ai-test
+
+services:
+
+  # ── Kafka (Redpanda, Kafka-compatible API) ────────────────────────────────
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    command:
+      - redpanda start
+      - --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:9092
+      - --advertise-kafka-addr internal://redpanda:29092,external://127.0.0.1:9092
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 256M
+      - --reserve-memory 0M
+      - --overprovisioned
+      - --check=false
+      - --mode dev-container
+      - --default-log-level=warn
+      - --set redpanda.auto_create_topics_enabled=true
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  # Topic init — creates required topics before tests run
+  redpanda-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        rpk topic create inference-events --brokers redpanda:29092 --partitions 4 --replicas 1 || true
+        rpk topic create inference-dlq    --brokers redpanda:29092 --partitions 1 --replicas 1 || true
+        rpk topic create anomaly-events   --brokers redpanda:29092 --partitions 2 --replicas 1 || true
+        echo "Topics ready."
+    restart: "no"
+
+  # ── ClickHouse ────────────────────────────────────────────────────────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    ports:
+      - "9000:9000"
+      - "8123:8123"
+    environment:
+      CLICKHOUSE_DB: infra_ai
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - ./deploy/clickhouse:/docker-entrypoint-initdb.d:ro
+    # M1/8GB RAM: cap ClickHouse memory usage
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+
+  # ── etcd (for distributed-flagd) ─────────────────────────────────────────
+  etcd:
+    image: gcr.io/etcd-development/etcd:v3.5.0
+    command:
+      - /usr/local/bin/etcd
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+    ports:
+      - "2379:2379"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/etcdctl", "--endpoints=http://localhost:2379", "endpoint", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s

@@ -23,20 +23,20 @@ const (
 
 // ToolCategory maps each tool name to its category.
 var ToolCategory = map[string]string{
-	"web_search":        CategoryRetrieval,
-	"vector_search":     CategoryRetrieval,
-	"document_read":     CategoryRetrieval,
-	"db_query":          CategoryRetrieval,
-	"code_interpreter":  CategoryExecution,
-	"bash_exec":         CategoryExecution,
-	"api_call":          CategoryExecution,
-	"http_request":      CategoryExecution,
-	"memory_read":       CategoryMemory,
-	"memory_write":      CategoryMemory,
+	"web_search":          CategoryRetrieval,
+	"vector_search":       CategoryRetrieval,
+	"document_read":       CategoryRetrieval,
+	"db_query":            CategoryRetrieval,
+	"code_interpreter":    CategoryExecution,
+	"bash_exec":           CategoryExecution,
+	"api_call":            CategoryExecution,
+	"http_request":        CategoryExecution,
+	"memory_read":         CategoryMemory,
+	"memory_write":        CategoryMemory,
 	"context_window_read": CategoryMemory,
-	"llm_call":          CategoryGeneration,
-	"image_gen":         CategoryGeneration,
-	"embedding_gen":     CategoryGeneration,
+	"llm_call":            CategoryGeneration,
+	"image_gen":           CategoryGeneration,
+	"embedding_gen":       CategoryGeneration,
 }
 
 // Span represents a single agent execution step collected by TraceForge.

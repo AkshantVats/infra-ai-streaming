@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,15 +14,40 @@ import (
 	"github.com/akshantvats/distributed-flagd/internal/eval"
 )
 
+// flagStore is the subset of etcdstore.Client used by Handler.
+type flagStore interface {
+	GetFlag(ctx context.Context, name string) (*etcdstore.FlagData, error)
+	SetFlag(ctx context.Context, fd *etcdstore.FlagData) error
+	ListFlags(ctx context.Context) ([]*etcdstore.FlagData, error)
+	DeleteFlag(ctx context.Context, name string) error
+}
+
+// auditLogger is the subset of audit.Logger used by Handler.
+type auditLogger interface {
+	Log(ctx context.Context, e audit.Entry) error
+}
+
+// modelEvaluator is the subset of eval.ModelEvaluator used by Handler.
+type modelEvaluator interface {
+	ResolveModelVersion(ctx context.Context, tenantID, userID string) (eval.EvalResult, error)
+}
+
 // Handler holds dependencies for all HTTP handlers.
 type Handler struct {
-	store     *etcdstore.Client
-	logger    *audit.Logger
-	evaluator *eval.ModelEvaluator
+	store     flagStore
+	logger    auditLogger
+	evaluator modelEvaluator
 }
 
 // New returns a Handler wired to the etcd store, audit logger, and model evaluator.
 func New(store *etcdstore.Client, logger *audit.Logger, evaluator *eval.ModelEvaluator) *Handler {
+	return &Handler{store: store, logger: logger, evaluator: evaluator}
+}
+
+// NewWithDeps constructs a Handler from interface-typed dependencies.
+// Intended for testing: pass fake implementations to exercise all code paths
+// without a live etcd cluster.
+func NewWithDeps(store flagStore, logger auditLogger, evaluator modelEvaluator) *Handler {
 	return &Handler{store: store, logger: logger, evaluator: evaluator}
 }
 

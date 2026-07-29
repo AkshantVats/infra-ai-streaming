@@ -68,3 +68,36 @@ func TestLangChain_NilInput(t *testing.T) {
 		t.Errorf("expected ErrNilInput, got %v", err)
 	}
 }
+
+// TestLangChain_CanHandle_Nil verifies CanHandle returns false for nil input.
+func TestLangChain_CanHandle_Nil(t *testing.T) {
+	a := &lc.Adapter{}
+	if a.CanHandle(nil) {
+		t.Error("CanHandle(nil) should return false")
+	}
+}
+
+// TestLangChain_CanHandle_InvalidJSON verifies CanHandle returns false for malformed JSON.
+func TestLangChain_CanHandle_InvalidJSON(t *testing.T) {
+	a := &lc.Adapter{}
+	if a.CanHandle([]byte(`{bad-json`)) {
+		t.Error("CanHandle(invalid-json) should return false")
+	}
+}
+
+// TestLangChain_Parse_InvalidJSON verifies Parse returns ErrUnknownFormat for bad JSON.
+func TestLangChain_Parse_InvalidJSON(t *testing.T) {
+	a := &lc.Adapter{}
+	_, err := a.Parse([]byte(`{bad json`))
+	if err != types.ErrUnknownFormat {
+		t.Errorf("expected ErrUnknownFormat for malformed JSON, got %v", err)
+	}
+}
+
+// TestLangChain_Vendor verifies Vendor() returns the expected string.
+func TestLangChain_Vendor(t *testing.T) {
+	a := &lc.Adapter{}
+	if a.Vendor() != "langchain" {
+		t.Errorf("Vendor() = %q, want langchain", a.Vendor())
+	}
+}

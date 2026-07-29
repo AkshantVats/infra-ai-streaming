@@ -69,3 +69,57 @@ func TestAnthropic_NilInput(t *testing.T) {
 		t.Errorf("expected ErrNilInput, got %v", err)
 	}
 }
+
+// TestAnthropic_CanHandle_Nil verifies CanHandle returns false for nil input.
+func TestAnthropic_CanHandle_Nil(t *testing.T) {
+	a := &ant.Adapter{}
+	if a.CanHandle(nil) {
+		t.Error("CanHandle(nil) should return false")
+	}
+}
+
+// TestAnthropic_CanHandle_InvalidJSON verifies CanHandle returns false for malformed JSON.
+func TestAnthropic_CanHandle_InvalidJSON(t *testing.T) {
+	a := &ant.Adapter{}
+	if a.CanHandle([]byte(`not-json`)) {
+		t.Error("CanHandle(invalid-json) should return false")
+	}
+}
+
+// TestAnthropic_Parse_InvalidJSON verifies Parse returns ErrUnknownFormat for bad JSON.
+func TestAnthropic_Parse_InvalidJSON(t *testing.T) {
+	a := &ant.Adapter{}
+	_, err := a.Parse([]byte(`{bad json`))
+	if err != types.ErrUnknownFormat {
+		t.Errorf("expected ErrUnknownFormat for malformed JSON, got %v", err)
+	}
+}
+
+// TestAnthropic_Parse_MissingName verifies Parse returns ErrMissingField when name is empty.
+func TestAnthropic_Parse_MissingName(t *testing.T) {
+	a := &ant.Adapter{}
+	_, err := a.Parse([]byte(`{"type":"tool_use","id":"toolu_01","name":"","input":{}}`))
+	if err != types.ErrMissingField {
+		t.Errorf("expected ErrMissingField, got %v", err)
+	}
+}
+
+// TestAnthropic_Vendor verifies Vendor returns the expected string.
+func TestAnthropic_Vendor(t *testing.T) {
+	a := &ant.Adapter{}
+	if a.Vendor() != "anthropic" {
+		t.Errorf("Vendor() = %q, want %q", a.Vendor(), "anthropic")
+	}
+}
+
+// TestAnthropic_Parse_EmptyInput verifies Parse handles a payload with empty input field.
+func TestAnthropic_Parse_EmptyInput(t *testing.T) {
+	a := &ant.Adapter{}
+	tc, err := a.Parse([]byte(`{"type":"tool_use","id":"toolu_01","name":"web_search","input":{}}`))
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	if tc.InputJSON != "{}" {
+		t.Errorf("InputJSON = %q, want {}", tc.InputJSON)
+	}
+}

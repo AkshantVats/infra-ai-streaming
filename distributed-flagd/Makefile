@@ -9,11 +9,26 @@ proto:
 build: proto
 	go build ./...
 
+COVER_OUT := /tmp/flagd-cover.out
+COVER_HTML := /tmp/flagd-cover.html
+
 test:
-	go test ./...
+	go test ./internal/... ./sdk/... -short -count=1 -timeout 60s
+
+test-cover:
+	go test ./internal/... ./sdk/... -short -count=1 -coverprofile=$(COVER_OUT) -covermode=atomic
+	go tool cover -func=$(COVER_OUT) | tail -1
+	go tool cover -html=$(COVER_OUT) -o $(COVER_HTML)
+	@echo "Coverage HTML: $(COVER_HTML)"
+
+test-race:
+	go test ./internal/... ./sdk/... -short -race -count=1 -timeout 120s
 
 test-integration:
-	FLAGD_INTEGRATION=1 go test -v -timeout 60s ./tests/integration/...
+	FLAGD_INTEGRATION=1 go test -tags integration -v -timeout 120s \
+		./tests/integration/... \
+		./internal/etcdstore/...
+	go test ./chaos/... -count=1 -timeout 300s -v
 
 lint:
 	golangci-lint run ./...

@@ -22,7 +22,7 @@ func (s *stubbedAdapter) Parse(raw []byte) (types.ToolCall, error) {
 	if len(raw) == 0 {
 		return types.ToolCall{}, types.ErrUnknownFormat
 	}
-	return types.ToolCall{Vendor: "stub", Status: "OK"}, nil
+	return types.ToolCall{Vendor: "stub"}, nil
 }
 
 func TestAdapterNilInput(t *testing.T) {
