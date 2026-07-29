@@ -9,11 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/akshantvats/infra-ai-streaming/consumer/internal/config"
@@ -76,24 +76,20 @@ func TestReaderRunConsumesMessage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Pre-create topic: auto_create_topics_enabled is async; ProduceSync may race.
-	// Use rpk inside the container (internal listener :29092) to create synchronously.
-	// Container name differs: local compose = "infra-ai-test-redpanda-1", CI = "redpanda".
-	redpandaContainer := os.Getenv("REDPANDA_CONTAINER")
-	if redpandaContainer == "" {
-		redpandaContainer = "infra-ai-test-redpanda-1"
+	// Pre-create topic via Kafka AdminClient so ProduceSync doesn't race auto-create.
+	adminCl, err := kgo.NewClient(kgo.SeedBrokers(brokers))
+	if err != nil {
+		t.Fatalf("admin client: %v", err)
 	}
-	rpkOut, rpkErr := exec.CommandContext(ctx, "docker", "exec",
-		redpandaContainer,
-		"rpk", "topic", "create", topic,
-		"--brokers", "localhost:29092",
-		"--partitions", "1", "--replicas", "1",
-	).CombinedOutput()
-	if rpkErr != nil {
-		// Topic may already exist — that's fine; any other error is fatal.
-		if !contains(string(rpkOut), "TOPIC_ALREADY_EXISTS") {
-			t.Fatalf("create topic %q: %v — %s", topic, rpkErr, rpkOut)
-		}
+	adm := kadm.NewClient(adminCl)
+	resp, createErr := adm.CreateTopic(ctx, 1, 1, nil, topic)
+	adm.Close()
+	adminCl.Close()
+	if createErr != nil {
+		t.Fatalf("create topic network error: %v", createErr)
+	}
+	if resp.Err != nil && resp.Err.Error() != "TOPIC_ALREADY_EXISTS" {
+		t.Logf("create topic warning: %v (proceeding)", resp.Err)
 	}
 
 	producer, err := kgo.NewClient(kgo.SeedBrokers(brokers))

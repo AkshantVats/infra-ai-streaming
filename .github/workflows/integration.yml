@@ -107,6 +107,15 @@ jobs:
             docker exec -i "$CH" clickhouse-client --database infra_ai --multiquery < "$f" || true
           done
 
+      - name: Verify Redpanda still running
+        run: |
+          if ! docker ps --filter name=redpanda --filter status=running -q | grep -q .; then
+            echo "::error::Redpanda container is not running! Logs:"
+            docker logs redpanda 2>&1 | tail -30
+            exit 1
+          fi
+          echo "Redpanda running: $(docker ps --filter name=redpanda --format '{{.Status}}')"
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: consumer/go.mod
@@ -117,7 +126,6 @@ jobs:
           KAFKA_BROKERS: "127.0.0.1:9092"
           REDIS_ADDR: "127.0.0.1:6379"
           CLICKHOUSE_DSN: "clickhouse://default:@127.0.0.1:9000/infra_ai"
-          REDPANDA_CONTAINER: "redpanda"
         run: |
           cd consumer
           go test -tags integration ./... -count=1 -timeout 120s \
