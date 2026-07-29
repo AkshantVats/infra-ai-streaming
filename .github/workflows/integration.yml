@@ -69,10 +69,10 @@ jobs:
             redpanda start \
               --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:9092 \
               --advertise-kafka-addr internal://redpanda:29092,external://127.0.0.1:9092 \
-              --rpc-addr redpanda:33145 \
-              --advertise-rpc-addr redpanda:33145 \
+              --rpc-addr 0.0.0.0:33145 \
+              --advertise-rpc-addr 127.0.0.1:33145 \
               --smp 1 \
-              --memory 512M \
+              --memory 1024M \
               --reserve-memory 0M \
               --overprovisioned \
               --check=false \
