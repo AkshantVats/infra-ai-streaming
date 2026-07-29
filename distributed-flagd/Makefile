@@ -25,7 +25,9 @@ test-race:
 	go test ./internal/... ./sdk/... -short -race -count=1 -timeout 120s
 
 test-integration:
-	FLAGD_INTEGRATION=1 go test -v -timeout 60s ./tests/integration/...
+	FLAGD_INTEGRATION=1 go test -tags integration -v -timeout 120s \
+		./tests/integration/... \
+		./internal/etcdstore/...
 	go test ./chaos/... -count=1 -timeout 300s -v
 
 lint:
