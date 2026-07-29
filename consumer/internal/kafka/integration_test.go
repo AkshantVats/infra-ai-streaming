@@ -78,8 +78,13 @@ func TestReaderRunConsumesMessage(t *testing.T) {
 
 	// Pre-create topic: auto_create_topics_enabled is async; ProduceSync may race.
 	// Use rpk inside the container (internal listener :29092) to create synchronously.
+	// Container name differs: local compose = "infra-ai-test-redpanda-1", CI = "redpanda".
+	redpandaContainer := os.Getenv("REDPANDA_CONTAINER")
+	if redpandaContainer == "" {
+		redpandaContainer = "infra-ai-test-redpanda-1"
+	}
 	rpkOut, rpkErr := exec.CommandContext(ctx, "docker", "exec",
-		"infra-ai-test-redpanda-1",
+		redpandaContainer,
 		"rpk", "topic", "create", topic,
 		"--brokers", "localhost:29092",
 		"--partitions", "1", "--replicas", "1",

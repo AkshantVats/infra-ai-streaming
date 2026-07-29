@@ -92,8 +92,16 @@ jobs:
 
       - name: Apply ClickHouse schema
         run: |
+          # Wait for ClickHouse to be ready
+          for i in $(seq 1 20); do
+            docker exec "$(docker ps -qf 'ancestor=clickhouse/clickhouse-server:24.3-alpine')" \
+              clickhouse-client --query 'SELECT 1' 2>/dev/null && break
+            echo "Waiting for ClickHouse... $i"
+            sleep 3
+          done
+          CH=$(docker ps -qf 'ancestor=clickhouse/clickhouse-server:24.3-alpine')
           for f in deploy/clickhouse/*.sql; do
-            clickhouse-client --host 127.0.0.1 --port 9000 --database infra_ai --multiquery < "$f" || true
+            docker exec -i "$CH" clickhouse-client --database infra_ai --multiquery < "$f" || true
           done
 
       - uses: actions/setup-go@v5
@@ -106,6 +114,7 @@ jobs:
           KAFKA_BROKERS: "127.0.0.1:9092"
           REDIS_ADDR: "127.0.0.1:6379"
           CLICKHOUSE_DSN: "clickhouse://default:@127.0.0.1:9000/infra_ai"
+          REDPANDA_CONTAINER: "redpanda"
         run: |
           cd consumer
           go test -tags integration ./... -count=1 -timeout 120s \
