@@ -1,0 +1,8 @@
+{
+  "id": "call_def456",
+  "type": "function",
+  "function": {
+    "name": "run_python",
+    "arguments": "{\"code\": \"import pandas as pd\\ndf = pd.read_csv('data.csv')\\nprint(df.head())\"}"
+  }
+}

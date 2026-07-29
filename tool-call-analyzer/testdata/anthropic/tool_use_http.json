@@ -1,0 +1,6 @@
+{
+  "type": "tool_use",
+  "id": "toolu_01A09q90qw90lq917835lq9",
+  "name": "search_web",
+  "input": {"query": "clickhouse schema design for traces"}
+}

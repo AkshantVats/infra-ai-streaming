@@ -1,0 +1,6 @@
+{
+  "type": "AgentAction",
+  "tool": "sql_query",
+  "tool_input": {"query": "SELECT trace_id, count(*) FROM tool_calls WHERE vendor='openai' GROUP BY trace_id LIMIT 100"},
+  "log": "Invoking: sql_query with SELECT trace_id..."
+}

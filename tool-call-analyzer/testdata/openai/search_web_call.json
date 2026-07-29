@@ -1,0 +1,8 @@
+{
+  "id": "call_abc123",
+  "type": "function",
+  "function": {
+    "name": "search_web",
+    "arguments": "{\"query\": \"golang kafka producer tutorial\"}"
+  }
+}

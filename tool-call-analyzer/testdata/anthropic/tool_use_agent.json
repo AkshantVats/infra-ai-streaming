@@ -1,0 +1,6 @@
+{
+  "type": "tool_use",
+  "id": "toolu_02B18r81rx81mr028946mr0",
+  "name": "delegate_task",
+  "input": {"agent": "summarizer", "task": "summarize the search results", "context_limit": 4096}
+}

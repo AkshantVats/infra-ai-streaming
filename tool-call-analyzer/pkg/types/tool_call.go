@@ -3,35 +3,23 @@
 // for the tool-call-analyzer normalization pipeline.
 package types
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ToolCategory is the semantic type of a tool invocation.
-// Used for grouping metrics, setting latency budgets, and routing alerts.
 type ToolCategory string
 
 const (
-	// CategoryHTTP covers all tool calls that make outbound HTTP requests.
-	// Examples: search_web, get_weather, fetch_url, call_api
-	CategoryHTTP ToolCategory = "http"
-
-	// CategoryDB covers all tool calls that query or write to a database.
-	// Examples: sql_query, vector_search, redis_get, elasticsearch_search
-	CategoryDB ToolCategory = "db"
-
-	// CategoryCode covers all tool calls that execute or analyze code.
-	// Examples: run_python, bash_exec, code_interpreter, compile_check
-	CategoryCode ToolCategory = "code"
-
-	// CategoryFile covers all tool calls that read or write to a filesystem.
-	// Examples: read_file, write_file, list_dir, fetch_s3_object
-	CategoryFile ToolCategory = "file"
-
-	// CategoryAgent covers all tool calls that invoke a sub-agent or model.
-	// Examples: call_subagent, delegate_task, run_llm_chain
+	CategoryHTTP  ToolCategory = "http"
+	CategoryDB    ToolCategory = "db"
+	CategoryCode  ToolCategory = "code"
+	CategoryFile  ToolCategory = "file"
 	CategoryAgent ToolCategory = "agent"
 )
 
-// AllCategories is used in tests to verify exhaustiveness.
+// AllCategories enables exhaustiveness checks in tests.
 var AllCategories = []ToolCategory{
 	CategoryHTTP, CategoryDB, CategoryCode, CategoryFile, CategoryAgent,
 }
@@ -50,49 +38,38 @@ type RetryMeta struct {
 	AttemptCostUSD float64 `json:"attempt_cost_usd"`
 	TotalCostUSD   float64 `json:"total_cost_usd"`
 	LastErrorMsg   string  `json:"last_error_msg"`
-	RetryReason    string  `json:"retry_reason"` // "timeout" | "rate_limit" | "server_error" | "empty_response"
+	RetryReason    string  `json:"retry_reason"`
 }
 
 // ToolCall is the canonical normalized representation of a single tool invocation.
-// All adapter implementations must populate every documented required field.
 type ToolCall struct {
-	// Identity
 	ID      string `json:"id"`
 	TraceID string `json:"trace_id"`
 	SpanID  string `json:"span_id"`
 
-	// Tool identity
 	Name     string       `json:"name"`
 	Vendor   string       `json:"vendor"`
 	Category ToolCategory `json:"category"`
 
-	// Invocation payload
 	InputJSON  string `json:"input_json"`
 	OutputJSON string `json:"output_json"`
 
-	// Timing
 	StartedAtNs  int64 `json:"started_at_ns"`
 	FinishedAtNs int64 `json:"finished_at_ns"`
 	DurationMs   int64 `json:"duration_ms"`
 
-	// Cost
 	Cost    CostEstimate `json:"cost"`
 	Retries RetryMeta    `json:"retries"`
-
-	// Status
-	Status   string `json:"status"`
-	ErrorMsg string `json:"error_msg"`
-	HasError bool   `json:"has_error"`
-
-	// Source metadata
-	ModelName    string `json:"model_name"`
-	AgentStep    int    `json:"agent_step"`
-	FrameworkVer string `json:"framework_ver"`
 }
 
-// perMillionTokens holds USD cost per 1M tokens: [inputCostPerM, outputCostPerM].
-// Source: published pricing as of 2026-07. Update when pricing changes.
-var perMillionTokens = map[string][2]float64{
+var (
+	ErrNilInput      = errors.New("nil input")
+	ErrUnknownFormat = errors.New("unknown format")
+	ErrMissingField  = errors.New("missing required field")
+)
+
+// perMillionUSD maps model name to cost per million tokens (input, output).
+var perMillionUSD = map[string][2]float64{
 	"gpt-4o":                    {2.50, 10.00},
 	"gpt-4o-mini":               {0.15, 0.60},
 	"gpt-4-turbo":               {10.00, 30.00},
@@ -101,17 +78,16 @@ var perMillionTokens = map[string][2]float64{
 	"claude-haiku-4-5-20251001": {0.80, 4.00},
 }
 
-// EstimateCost returns the USD cost for a single LLM call given token counts and model name.
-// Returns 0.0 for unknown models.
+// EstimateCost returns cost in USD for a given number of tokens. Returns 0.0 for unknown models.
 func EstimateCost(inputTokens, outputTokens int, modelName string) float64 {
-	prices, ok := perMillionTokens[modelName]
+	rates, ok := perMillionUSD[modelName]
 	if !ok {
 		return 0.0
 	}
-	return float64(inputTokens)/1_000_000*prices[0] + float64(outputTokens)/1_000_000*prices[1]
+	return float64(inputTokens)/1_000_000*rates[0] + float64(outputTokens)/1_000_000*rates[1]
 }
 
-// NewRetryMeta constructs RetryMeta with TotalCostUSD computed from attempt cost × (retries+1).
+// NewRetryMeta constructs RetryMeta with total cost attributed across all attempts.
 func NewRetryMeta(retryCount int, attemptCostUSD float64, lastErr, reason string) RetryMeta {
 	return RetryMeta{
 		RetryCount:     retryCount,
@@ -122,9 +98,29 @@ func NewRetryMeta(retryCount int, attemptCostUSD float64, lastErr, reason string
 	}
 }
 
-// Sentinel errors for adapter implementations.
-var (
-	ErrNilInput      = errors.New("tool-call-analyzer: nil input to adapter")
-	ErrUnknownFormat = errors.New("tool-call-analyzer: unrecognized tool call format")
-	ErrMissingField  = errors.New("tool-call-analyzer: required field missing in payload")
-)
+// ClassifyByName returns the ToolCategory for a tool name using ordered priority rules.
+// The default is CategoryHTTP for tools that don't match any keyword group.
+func ClassifyByName(name string) ToolCategory {
+	lower := strings.ToLower(name)
+	for _, kw := range []string{"sql", "query", "db", "database", "vector", "redis", "elastic", "search_db", "pg_", "mysql"} {
+		if strings.Contains(lower, kw) {
+			return CategoryDB
+		}
+	}
+	for _, kw := range []string{"run_", "exec", "python", "bash", "shell", "compile", "interpret", "code_"} {
+		if strings.Contains(lower, kw) {
+			return CategoryCode
+		}
+	}
+	for _, kw := range []string{"file", "read_", "write_", "dir", "s3", "gcs", "blob", "fs_", "upload", "download"} {
+		if strings.Contains(lower, kw) {
+			return CategoryFile
+		}
+	}
+	for _, kw := range []string{"agent", "delegate", "llm_", "chain", "subagent", "model_call"} {
+		if strings.Contains(lower, kw) {
+			return CategoryAgent
+		}
+	}
+	return CategoryHTTP
+}
