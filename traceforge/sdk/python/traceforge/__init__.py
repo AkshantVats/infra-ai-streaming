@@ -3,8 +3,9 @@
 
 from ._wrap import _InstrumentedClient
 from ._span import new_trace_id, new_span_id
+from ._context import start_span, ManualSpan
 
-__all__ = ["wrap_openai"]
+__all__ = ["wrap_openai", "start_span", "new_trace_id", "new_span_id", "ManualSpan"]
 
 
 def wrap_openai(client, *, trace_id: str | None = None, parent_span_id: str | None = None):

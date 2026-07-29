@@ -16,7 +16,10 @@ import (
 
 var (
 	httpClient = &http.Client{Timeout: 2 * time.Second}
-	kafkaOnce  sync.Once
+	// kafkaOnce ensures a single kgo.Client is shared across all spans in the
+	// process; franz-go clients hold a connection pool internally and are not
+	// cheap to create per-span.
+	kafkaOnce   sync.Once
 	kafkaClient *kgo.Client
 )
 

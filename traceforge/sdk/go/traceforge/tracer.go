@@ -14,10 +14,10 @@ import (
 func StartSpan(ctx context.Context, toolName string) (context.Context, *Span) {
 	parent := spanFromContext(ctx)
 	s := &Span{
-		SpanID:    newID(),
-		ToolName:  toolName,
-		StartNs:   time.Now().UnixNano(),
-		Tags:      make(map[string]string),
+		SpanID:   newID(),
+		ToolName: toolName,
+		StartNs:  time.Now().UnixNano(),
+		Tags:     make(map[string]string),
 	}
 	if parent != nil {
 		s.TraceID = parent.TraceID
