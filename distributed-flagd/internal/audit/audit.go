@@ -26,12 +26,20 @@ type Entry struct {
 	EvaluationCountSnapshot int64  `json:"evaluation_count_snapshot"`
 }
 
-// Logger writes audit entries to etcd with a 90-day TTL via etcd lease.
-type Logger struct {
-	client *clientv3.Client
+// etcdLeaseKV is the subset of *clientv3.Client used by Logger.
+// Defining it as an interface makes Logger testable without a live etcd cluster.
+type etcdLeaseKV interface {
+	Grant(ctx context.Context, ttl int64) (*clientv3.LeaseGrantResponse, error)
+	Put(ctx context.Context, key, val string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error)
 }
 
-// New constructs an audit Logger.
+// Logger writes audit entries to etcd with a 90-day TTL via etcd lease.
+type Logger struct {
+	client etcdLeaseKV
+}
+
+// New constructs an audit Logger backed by an etcd client.
+// c must not be nil.
 func New(c *clientv3.Client) *Logger {
 	return &Logger{client: c}
 }
