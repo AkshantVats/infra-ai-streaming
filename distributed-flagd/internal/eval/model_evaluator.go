@@ -8,18 +8,25 @@ import (
 	"github.com/akshantvats/distributed-flagd/internal/etcdstore"
 )
 
+// FlagStore is the subset of etcdstore.Client used by ModelEvaluator.
+// Defining it as an interface makes the evaluator testable without a live etcd cluster.
+type FlagStore interface {
+	GetFlag(ctx context.Context, name string) (*etcdstore.FlagData, error)
+}
+
 // ModelEvaluator resolves the active model version for a given tenant and user.
 // It looks up the percentage-rollout flag named "model-rollout:{tenantID}" from
 // etcd and applies deterministic FNV-1a hashing on "tenantID:userID" to assign
 // a sticky variant. If no flag exists for the tenant, it returns defaultModel.
 type ModelEvaluator struct {
-	store        *etcdstore.Client
+	store        FlagStore
 	defaultModel string
 }
 
 // NewModelEvaluator constructs an evaluator backed by the etcd store.
 // defaultModel is returned when no flag is configured for a tenant.
-func NewModelEvaluator(store *etcdstore.Client, defaultModel string) *ModelEvaluator {
+// store must implement FlagStore; *etcdstore.Client satisfies this interface.
+func NewModelEvaluator(store FlagStore, defaultModel string) *ModelEvaluator {
 	return &ModelEvaluator{store: store, defaultModel: defaultModel}
 }
 
