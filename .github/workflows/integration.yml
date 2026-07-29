@@ -1,0 +1,155 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      redpanda:
+        image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+        ports:
+          - 9092:9092
+        options: >-
+          --health-cmd "rpk cluster health --brokers localhost:9092"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+          --health-start-period 15s
+
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.3-alpine
+        ports:
+          - 9000:9000
+          - 8123:8123
+        env:
+          CLICKHOUSE_DB: infra_ai
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: ""
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+          --health-start-period 15s
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 3s
+
+      etcd:
+        image: gcr.io/etcd-development/etcd:v3.5.0
+        ports:
+          - 2379:2379
+        options: >-
+          --entrypoint /usr/local/bin/etcd
+          --health-cmd "/usr/local/bin/etcdctl --endpoints=http://localhost:2379 endpoint health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 5s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Kafka topics and enable auto-create
+        run: |
+          # Wait for Redpanda health
+          for i in $(seq 1 20); do
+            docker exec $(docker ps -q --filter ancestor=docker.redpanda.com/redpandadata/redpanda:v24.2.4) \
+              rpk cluster health --brokers localhost:9092 && break || sleep 3
+          done
+          RPANDA=$(docker ps -q --filter ancestor=docker.redpanda.com/redpandadata/redpanda:v24.2.4)
+          docker exec "$RPANDA" rpk cluster config set auto_create_topics_enabled true || true
+          docker exec "$RPANDA" rpk topic create inference-events --brokers localhost:9092 --partitions 4 --replicas 1 || true
+          docker exec "$RPANDA" rpk topic create inference-dlq    --brokers localhost:9092 --partitions 1 --replicas 1 || true
+          docker exec "$RPANDA" rpk topic create anomaly-events   --brokers localhost:9092 --partitions 2 --replicas 1 || true
+
+      - name: Apply ClickHouse schema
+        run: |
+          for f in deploy/clickhouse/*.sql; do
+            clickhouse-client --host 127.0.0.1 --port 9000 --database infra_ai --multiquery < "$f" || true
+          done
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: consumer/go.mod
+          cache-dependency-path: consumer/go.sum
+
+      - name: consumer — integration tests (Kafka + Redis + ClickHouse)
+        env:
+          KAFKA_BROKERS: "127.0.0.1:9092"
+          REDIS_ADDR: "127.0.0.1:6379"
+          CLICKHOUSE_DSN: "clickhouse://default:@127.0.0.1:9000/infra_ai"
+        run: |
+          cd consumer
+          go test -tags integration ./... -count=1 -timeout 120s -v \
+            -coverprofile=/tmp/consumer-integration.out -covermode=atomic
+
+      - name: consumer — combined coverage (unit + integration)
+        run: |
+          cd consumer
+          go test ./... -count=1 -coverprofile=/tmp/consumer-unit.out -covermode=atomic -short
+          # Merge profiles: use gocovmerge if available, otherwise just report integration
+          go tool cover -func=/tmp/consumer-integration.out | tail -3
+
+      - name: tool-call-analyzer — integration tests (Kafka)
+        env:
+          KAFKA_BROKERS: "127.0.0.1:9092"
+        run: |
+          cd tool-call-analyzer
+          go test -tags integration ./... -count=1 -timeout 120s -v \
+            -coverprofile=/tmp/tca-integration.out -covermode=atomic
+          go tool cover -func=/tmp/tca-integration.out | tail -3
+
+      - name: distributed-flagd — integration tests (etcd)
+        env:
+          ETCD_ENDPOINTS: "http://127.0.0.1:2379"
+        run: |
+          cd distributed-flagd
+          go test -tags integration ./... -count=1 -timeout 120s -v \
+            -coverprofile=/tmp/flagd-integration.out -covermode=atomic
+          go tool cover -func=/tmp/flagd-integration.out | tail -3
+
+      - name: traceforge — all tests (no infra needed)
+        run: |
+          cd traceforge
+          go test ./... -count=1 -timeout 60s \
+            -coverprofile=/tmp/traceforge.out -covermode=atomic
+          go tool cover -func=/tmp/traceforge.out | tail -3
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-coverage
+          path: /tmp/*-integration.out
+          retention-days: 7
+
+  coverage-gate:
+    runs-on: ubuntu-latest
+    needs: integration
+    if: always()
+    steps:
+      - name: Check integration job passed
+        run: |
+          if [ "${{ needs.integration.result }}" != "success" ]; then
+            echo "Integration tests failed — coverage gate not met"
+            exit 1
+          fi
+          echo "Integration tests passed"

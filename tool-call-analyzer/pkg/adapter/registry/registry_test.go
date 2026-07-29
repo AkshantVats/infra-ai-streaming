@@ -60,3 +60,21 @@ func TestRegistry_VendorDetection(t *testing.T) {
 		t.Errorf("expected vendor=anthropic, got %q", v)
 	}
 }
+
+// TestRegistry_Vendor_UnknownFormat verifies Vendor returns empty string when no adapter matches.
+func TestRegistry_Vendor_UnknownFormat(t *testing.T) {
+	r := registry.Default()
+	v := r.Vendor([]byte(`{"completely":"unknown"}`))
+	if v != "" {
+		t.Errorf("expected empty vendor for unknown format, got %q", v)
+	}
+}
+
+// TestRegistry_Parse_NilInput verifies Parse with nil returns ErrUnknownFormat.
+func TestRegistry_Parse_Nil_ErrorPath(t *testing.T) {
+	r := registry.Default()
+	_, err := r.Parse(nil)
+	if err != types.ErrUnknownFormat {
+		t.Errorf("expected ErrUnknownFormat for nil, got %v", err)
+	}
+}
