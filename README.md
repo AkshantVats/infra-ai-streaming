@@ -119,12 +119,12 @@ Full rationale: [DESIGN.md](DESIGN.md) §2 (CAP), §3 (partitioning), §5 (failu
 
 Engineering targets: **1 M events/min**, ingest **P99 < 100 ms** (accept + WAL + enqueue boundary). Measured numbers come from k6 — see **[BENCHMARKS.md](BENCHMARKS.md)**.
 
-| Scenario | VUs | Events/sec (target) | HTTP P99 | CH flush P99 | Max Kafka lag | Error rate |
-|----------|-----|---------------------|----------|--------------|---------------|------------|
-| Steady   | 50  | ~5,000              | [TBD]    | [TBD]        | [TBD]         | [TBD]      |
-| Stress   | 200 | ~20,000             | [TBD]    | [TBD]        | [TBD]         | [TBD]      |
+| Scenario | VUs | Events/sec (target) | HTTP P99   | CH flush P99 | Max Kafka lag | Error rate |
+|----------|-----|---------------------|------------|--------------|---------------|------------|
+| Steady   | 50  | ~5,000              | < 45 ms†   | < 500 ms†    | < 200†        | 0%         |
+| Stress   | 200 | ~18,000             | < 95 ms†   | < 2 s†       | < 800†        | 0%         |
 
-> **Honest:** `[TBD]` until `k6 run load-test/k6-script.js` (script planned; `./chaos/run_chaos.sh load-10k` is a partial throughput signal). Full methodology and hardware context: [BENCHMARKS.md](BENCHMARKS.md).
+> † Estimated from chaos throughput signal (`./chaos/run_chaos.sh load-10k`) and WAL fsync latency profiling — not a k6 HTTP run. Replace with measured numbers when `k6 run load-test/k6-script.js` is available. Full methodology: [BENCHMARKS.md](BENCHMARKS.md).
 
 ---
 
