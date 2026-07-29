@@ -36,6 +36,19 @@ jobs:
   integration:
     runs-on: ubuntu-latest
 
+    services:
+      etcd:
+        image: gcr.io/etcd-development/etcd:v3.5.0
+        ports:
+          - 2379:2379
+        options: >-
+          --entrypoint /usr/local/bin/etcd
+          --health-cmd "/usr/local/bin/etcdctl --endpoints=http://localhost:2379 endpoint health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 5s
+
     steps:
       - uses: actions/checkout@v7
 
@@ -44,27 +57,9 @@ jobs:
           go-version-file: distributed-flagd/go.mod
           cache-dependency-path: distributed-flagd/go.sum
 
-      - name: Start etcd
-        run: |
-          ETCD_VER=v3.5.9
-          curl -sL https://github.com/etcd-io/etcd/releases/download/${ETCD_VER}/etcd-${ETCD_VER}-linux-amd64.tar.gz \
-            | tar xz --strip-components=1 -C /usr/local/bin \
-              etcd-${ETCD_VER}-linux-amd64/etcd \
-              etcd-${ETCD_VER}-linux-amd64/etcdctl
-          etcd \
-            --listen-client-urls http://0.0.0.0:2379 \
-            --advertise-client-urls http://localhost:2379 \
-            --listen-peer-urls http://0.0.0.0:2380 \
-            --initial-advertise-peer-urls http://localhost:2380 \
-            --data-dir /tmp/etcd-data &
-          for i in $(seq 1 20); do
-            curl -sf http://localhost:2379/health && break
-            echo "waiting for etcd ($i/20)..."
-            sleep 2
-          done
-
       - name: go test (integration)
         env:
           FLAGD_INTEGRATION: "1"
           FLAGD_TEST_ETCD: "localhost:2379"
-        run: cd distributed-flagd && go test -v -timeout 60s ./tests/integration/...
+          ETCD_ENDPOINTS: "http://localhost:2379"
+        run: cd distributed-flagd && go test -v -timeout 120s ./tests/integration/... ./internal/etcdstore/...
