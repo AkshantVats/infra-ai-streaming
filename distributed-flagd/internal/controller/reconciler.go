@@ -67,6 +67,8 @@ type Reconciler struct {
 	token     string
 	store     Store
 	client    *http.Client
+	// minBackoff overrides the default 2s retry backoff; used in tests for fast iteration.
+	minBackoff time.Duration
 }
 
 // New returns a Reconciler that watches the given namespace.
@@ -82,7 +84,11 @@ func New(k8sURL, namespace, token string, store Store) *Reconciler {
 
 // Run starts the watch loop. It blocks until ctx is cancelled, retrying on errors with backoff.
 func (r *Reconciler) Run(ctx context.Context) error {
-	backoff := 2 * time.Second
+	initialBackoff := r.minBackoff
+	if initialBackoff == 0 {
+		initialBackoff = 2 * time.Second
+	}
+	backoff := initialBackoff
 	for {
 		if err := r.watch(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -99,7 +105,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		backoff = 2 * time.Second
+		backoff = initialBackoff
 	}
 }
 

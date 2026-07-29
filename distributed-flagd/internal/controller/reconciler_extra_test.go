@@ -188,7 +188,8 @@ func (e *errMockStore) SetFlag(_ context.Context, _ *etcdstore.FlagData) error {
 	return context.DeadlineExceeded
 }
 
-// TestRun_ContextCancellation verifies Run returns ctx.Err() when context is cancelled.
+// TestRun_ContextCancellation verifies Run returns ctx.Err() when context is cancelled
+// while a watch is in progress (ctx cancels the inflight HTTP request).
 func TestRun_ContextCancellation(t *testing.T) {
 	store := newMockStore()
 	// Server that returns 200 but hangs — Run should abort when ctx is cancelled.
@@ -206,5 +207,80 @@ func TestRun_ContextCancellation(t *testing.T) {
 	err := rec.Run(ctx)
 	if err == nil {
 		t.Error("expected non-nil error from Run after ctx cancellation")
+	}
+}
+
+// TestRun_RetryOnWatchError exercises the backoff/retry path in Run.
+// The server returns 500 on the first call (triggering a retry) and then
+// cancels the ctx so Run terminates cleanly.
+func TestRun_RetryOnWatchError(t *testing.T) {
+	store := newMockStore()
+	callCount := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			// First call: return 500 to force a retry.
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		// Second call: return 200 and hang until ctx cancels.
+		w.WriteHeader(http.StatusOK)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	rec := New(srv.URL, "default", "", store)
+	rec.minBackoff = 1 * time.Millisecond // fast backoff for tests
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	err := rec.Run(ctx)
+	if err == nil {
+		t.Error("expected non-nil error from Run")
+	}
+	if callCount < 2 {
+		t.Errorf("expected at least 2 watch calls (1 error + 1 retry), got %d", callCount)
+	}
+}
+
+// TestRun_BackoffReset verifies backoff is reset to initial after a successful watch.
+// Three calls: 500 (error, backoff), 200+EOF (success, backoff reset), ctx cancel.
+func TestRun_BackoffReset(t *testing.T) {
+	store := newMockStore()
+	callCount := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		switch callCount {
+		case 1:
+			// Fail: triggers retry after backoff.
+			w.WriteHeader(http.StatusInternalServerError)
+		case 2:
+			// Succeed with an ADDED event then close (EOF resets backoff).
+			w.WriteHeader(http.StatusOK)
+			event := makeEvent("ADDED", "reset-test-flag", true, nil)
+			w.Write(event)
+		default:
+			// Third+ call: context should be nearly done; hang until cancelled.
+			w.WriteHeader(http.StatusOK)
+			<-r.Context().Done()
+		}
+	}))
+	defer srv.Close()
+
+	rec := New(srv.URL, "default", "", store)
+	rec.minBackoff = 1 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	err := rec.Run(ctx)
+	if err == nil {
+		t.Error("expected non-nil error from Run")
+	}
+	if callCount < 2 {
+		t.Errorf("expected at least 2 calls, got %d", callCount)
 	}
 }
