@@ -20,6 +20,8 @@ func main() {
 		runBottleneck(os.Args[2:])
 	case "waterfall":
 		runWaterfall(os.Args[2:])
+	case "dual-write":
+		runDualWrite(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -33,4 +35,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  graph        Build and analyze a tool dependency graph for a trace")
 	fmt.Fprintln(os.Stderr, "  bottleneck   Rank spans by exclusive time to find the trace bottleneck")
 	fmt.Fprintln(os.Stderr, "  waterfall    Build a Grafana-compatible cost waterfall payload for a trace")
+	fmt.Fprintln(os.Stderr, "  dual-write   Dual-write a trace's tool cost_usd to LensAI ingest")
 }
