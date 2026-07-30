@@ -1,0 +1,165 @@
+# SPDX-License-Identifier: MIT
+#
+# This documents the wire contract pkg/clickhouse.Writer actually speaks --
+# an HTTP INSERT against ClickHouse's native HTTP interface, not a bespoke
+# ingest service. There is no standalone "POST /ingest" HTTP server in this
+# repo; Writer.Insert *is* the ingest boundary, and it talks straight to
+# ClickHouse. See pkg/clickhouse/writer.go and schema/001_tool_calls.sql for
+# the implementation this spec describes.
+openapi: 3.1.0
+info:
+  title: tool-call-analyzer — ClickHouse span ingest
+  description: >
+    The HTTP contract pkg/clickhouse.Writer.Insert uses to write a
+    normalized tool-call span into ClickHouse's tool_calls table via
+    `INSERT ... FORMAT JSONEachRow`. When a Kafka fallback producer is wired
+    in (see README.md, "Kafka fallback for slow/failed ClickHouse writes"),
+    a failed or slow write here is buffered to the tool-spans Kafka topic
+    instead of being dropped, and the Go caller sees a nil error.
+  version: "43.0.0"
+  contact:
+    name: TraceForge
+    url: https://github.com/AkshantVats/infra-ai-streaming
+
+servers:
+  - url: http://localhost:8123
+    description: Local ClickHouse HTTP interface (default dev target)
+
+paths:
+  /:
+    post:
+      summary: Insert a tool-call span row
+      description: >
+        pkg/clickhouse.Writer.Insert POSTs exactly one JSON row per call to
+        this endpoint with `?query=INSERT INTO tool_calls FORMAT
+        JSONEachRow` in the query string (URL-encoded) and the row as the
+        request body. ClickHouse's HTTP interface accepts this as a
+        single-statement query; there is no separate route per table.
+      operationId: insertToolCallRow
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: >
+            The literal ClickHouse SQL statement, always
+            `INSERT INTO tool_calls FORMAT JSONEachRow` for this writer.
+          schema:
+            type: string
+            example: "INSERT INTO tool_calls FORMAT JSONEachRow"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolCallRow'
+      responses:
+        '200':
+          description: Row inserted successfully.
+        '4XX':
+          description: >
+            Malformed query or row (e.g. type mismatch against the
+            tool_calls DDL). Writer.Insert returns this as
+            `clickhouse: unexpected status <code>`; with a fallback
+            producer wired, the span is buffered to Kafka instead of the
+            error propagating to the caller.
+        '5XX':
+          description: >
+            ClickHouse-side failure (overloaded, restarting, disk full).
+            Same fallback behavior as 4XX responses.
+
+components:
+  schemas:
+    ToolCallRow:
+      type: object
+      description: >
+        The flat, ClickHouse-column-shaped representation Writer.Insert
+        marshals a types.ToolCall into (see the unexported `row` type in
+        pkg/clickhouse/writer.go). Column names and types match
+        schema/001_tool_calls.sql exactly.
+      required:
+        - trace_id
+        - tool_id
+        - tool_name
+        - vendor
+        - category
+        - duration_ms
+        - trace_duration_ms
+        - has_error
+        - status
+        - timestamp
+      properties:
+        trace_id:
+          type: string
+          example: "4bf92f3577b34da6a3ce929d0e0e4736"
+        tool_id:
+          type: string
+          example: "tcall-001"
+        tool_name:
+          type: string
+          example: "search_web"
+        vendor:
+          type: string
+          example: "openai"
+        category:
+          type: string
+          enum: [http, db, code, file, agent]
+          example: "http"
+        model_name:
+          type: string
+          description: LLM that produced the tool_use block, if attributable.
+          example: "gpt-4o"
+        input_tokens:
+          type: integer
+          format: int32
+          minimum: 0
+        output_tokens:
+          type: integer
+          format: int32
+          minimum: 0
+        cost_usd:
+          type: number
+          format: double
+          example: 0.00192
+        duration_ms:
+          type: integer
+          format: int64
+          description: Tool span duration.
+        trace_duration_ms:
+          type: integer
+          format: int64
+          description: Root span duration for the whole trace this tool call belongs to.
+        has_error:
+          type: integer
+          enum: [0, 1]
+          description: 1 when status != "OK", stored as UInt8 in ClickHouse.
+        status:
+          type: string
+          example: "OK"
+        timestamp:
+          type: string
+          description: "UTC, ClickHouse DateTime64(3) format: 2006-01-02 15:04:05.000"
+          example: "2026-07-30 08:42:00.123"
+
+    SpanEvent:
+      type: object
+      description: >
+        The JSON envelope pkg/kafka.FallbackProducer publishes to the
+        tool-spans topic when a ToolCallRow above could not be written to
+        ClickHouse within the writer's fallback deadline (or the write
+        errored). A superset of ToolCallRow with buffering metadata added,
+        so a future recovery consumer can replay it without the original
+        types.ToolCall. See pkg/kafka/fallback.go.
+      allOf:
+        - $ref: '#/components/schemas/ToolCallRow'
+        - type: object
+          required:
+            - buffered_at_unix_ms
+            - buffer_reason
+          properties:
+            buffered_at_unix_ms:
+              type: integer
+              format: int64
+              description: Unix milliseconds when the span was diverted to Kafka.
+            buffer_reason:
+              type: string
+              enum: [clickhouse_error, clickhouse_timeout]
