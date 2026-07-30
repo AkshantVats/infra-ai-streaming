@@ -1,0 +1,137 @@
+{
+  "title": "LensAI — Unified Tenant Cost (LLM + Tool Calls)",
+  "description": "Dual-write hot/cold tiering board: one query face over infra_ai.inference_events (LensAI's own LLM inference cost events plus tool_call-sourced events dual-written by tool-call-analyzer's pkg/lensai writer), joined against tool_calls for tool-level drill-down. Panels 1-2 need the `trace_id` and `source` columns added to infra_ai.inference_events (additive migration, tracked as a fast-follow in the ingestion/consumer services) -- until then they filter to tenant_id only and `source` reads as empty for pre-dual-write rows.",
+  "uid": "lensai-unified-tenant-cost-v1",
+  "schemaVersion": 38,
+  "version": 1,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "1m",
+  "tags": ["lensai", "tool-call-analyzer", "traceforge", "cost", "multi-tenant"],
+  "templating": {
+    "list": [
+      {
+        "name": "tenant_id",
+        "type": "textbox",
+        "label": "Tenant ID",
+        "description": "Filter every panel to a single tenant_id -- the join key shared by infra_ai.inference_events (native) and tool_calls (via trace_id once dual-write has run).",
+        "current": { "value": "demo" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Cost by Source — ${tenant_id}",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "description": "One row per source: 'llm_inference' (or empty, for events written before the source column existed) is native LensAI inference cost; 'tool_call' is cost dual-written from tool-call-analyzer.",
+      "options": {
+        "orientation": "horizontal",
+        "xField": "source"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT ifNull(nullIf(source, ''), 'llm_inference') AS source, round(sum(cost_usd), 4) AS cost_usd FROM infra_ai.inference_events WHERE tenant_id = '${tenant_id}' GROUP BY source ORDER BY cost_usd DESC",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Total Unified Cost (USD) — ${tenant_id}",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT round(sum(cost_usd), 4) AS cost_usd FROM infra_ai.inference_events WHERE tenant_id = '${tenant_id}'",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Tool Call Share of Cost — ${tenant_id}",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "description": "Percentage of unified cost attributable to tool_call-sourced dual-write events, vs native LLM inference events.",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "percent" }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT round(100.0 * sumIf(cost_usd, source = 'tool_call') / sum(cost_usd), 2) AS tool_call_pct FROM infra_ai.inference_events WHERE tenant_id = '${tenant_id}' AND cost_usd > 0",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Cost Over Time by Source — ${tenant_id}",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 4 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfMinute(timestamp) AS time, ifNull(nullIf(source, ''), 'llm_inference') AS source, sum(cost_usd) AS cost_usd FROM infra_ai.inference_events WHERE tenant_id = '${tenant_id}' AND timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY time, source ORDER BY time ASC",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Tool Cost Breakdown by Tool — ${tenant_id}",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "description": "Drill-down from the unified view into tool-level cost, joining tool_calls.trace_id against the tenant's traces once infra_ai.inference_events carries trace_id.",
+      "targets": [
+        {
+          "rawSql": "SELECT tc.tool_name AS tool_name, round(sum(tc.cost_usd), 4) AS cost_usd FROM tool_calls AS tc WHERE tc.trace_id IN (SELECT DISTINCT trace_id FROM infra_ai.inference_events WHERE tenant_id = '${tenant_id}' AND trace_id != '') GROUP BY tc.tool_name ORDER BY cost_usd DESC LIMIT 20",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "LLM Cost Breakdown by Model — ${tenant_id}",
+      "type": "barchart",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "rawSql": "SELECT model_id, round(sum(cost_usd), 4) AS cost_usd FROM infra_ai.inference_events WHERE tenant_id = '${tenant_id}' AND (source = '' OR source = 'llm_inference') GROUP BY model_id ORDER BY cost_usd DESC LIMIT 20",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Top Traces by Unified Cost — ${tenant_id}",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 8 },
+      "datasource": { "type": "vertamedia-clickhouse-datasource", "uid": "clickhouse" },
+      "description": "Per-trace total cost combining both pipelines -- requires the trace_id column on infra_ai.inference_events (see dashboard description).",
+      "options": {
+        "sortBy": [{ "displayName": "cost_usd", "desc": true }]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT trace_id, ifNull(nullIf(source, ''), 'llm_inference') AS source, count() AS event_count, round(sum(cost_usd), 4) AS cost_usd FROM infra_ai.inference_events WHERE tenant_id = '${tenant_id}' AND trace_id != '' GROUP BY trace_id, source ORDER BY cost_usd DESC LIMIT 50",
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}
