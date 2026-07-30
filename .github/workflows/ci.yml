@@ -53,6 +53,17 @@ jobs:
       - name: Go test (consumer)
         run: cd consumer && go test ./...
 
+      - name: gofmt (check, agent-replay-engine)
+        run: |
+          cd agent-replay-engine
+          test -z "$(gofmt -l .)"
+
+      - name: Go vet (agent-replay-engine)
+        run: cd agent-replay-engine && go vet ./...
+
+      - name: Go test (agent-replay-engine)
+        run: cd agent-replay-engine && go test -race ./...
+
   helm:
     runs-on: ubuntu-latest
     steps:
