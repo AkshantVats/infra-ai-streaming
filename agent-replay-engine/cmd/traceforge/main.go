@@ -13,6 +13,7 @@ import (
 
 	"github.com/akshantvats/agent-replay-engine/pkg/diff"
 	"github.com/akshantvats/agent-replay-engine/pkg/eventlog"
+	"github.com/akshantvats/agent-replay-engine/pkg/fault"
 	"github.com/akshantvats/agent-replay-engine/pkg/mocker"
 	"github.com/akshantvats/agent-replay-engine/pkg/replay"
 )
@@ -28,7 +29,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: traceforge <command> [flags]")
 		fmt.Fprintln(stderr, "commands:")
-		fmt.Fprintln(stderr, "  replay --log <path> --trace-id <id> [--stop-at-step N]")
+		fmt.Fprintln(stderr, "  replay --log <path> --trace-id <id> [--stop-at-step N] [--inject-timeout N]")
 		fmt.Fprintln(stderr, "  diff --log <path> --trace-a <id> --trace-b <id>")
 		return 2
 	}
@@ -50,6 +51,7 @@ func runReplay(args []string, stdout, stderr io.Writer) int {
 	logPath := fs.String("log", "", "path to a recorded event log (JSON Lines)")
 	traceID := fs.String("trace-id", "", "trace_id of the run to replay")
 	stopAtStep := fs.Int("stop-at-step", 0, "halt after this many tool-call steps (0 = run to completion)")
+	injectTimeoutAt := fs.Int("inject-timeout", 0, "force this 1-based tool-call step to fail with a synthetic timeout instead of its recorded response (0 = disabled)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -88,6 +90,10 @@ func runReplay(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer replayF.Close()
+
+	if *injectTimeoutAt > 0 {
+		m.Inject(*injectTimeoutAt, fault.KindTimeout)
+	}
 
 	result, err := replay.RunFromReader(replayF, *traceID, m, *stopAtStep)
 	if err != nil {

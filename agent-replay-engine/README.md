@@ -71,12 +71,19 @@ go run ./cmd/traceforge diff --log ab-run.jsonl --trace-a rider-a --trace-b ride
 
 Finds the first `tool_call` step where two traces disagree, comparing `tool_name` + `input_hash` (structural, not raw-text) — see [DESIGN.md § Diff Algorithm](DESIGN.md#diff-algorithm).
 
+```bash
+go run ./cmd/traceforge replay --log run.jsonl --trace-id trace-1 --inject-timeout 4
+```
+
+Forces tool-call step 4 to fail with a synthetic timeout instead of serving its recorded response, so an agent's error-handling path can be verified on demand — see [DESIGN.md § Fault Injection](DESIGN.md#fault-injection).
+
 ## Packages
 
 | Package | Purpose |
 |---|---|
 | `pkg/eventlog` | `AgentEvent` types, JSON Lines read/write, ordering + uniqueness validation, `FilterByTraceID`, streaming `Scanner` (Day 49) |
-| `pkg/mocker` | `ToolMocker` — frozen tool response server keyed by `SHA-256(tool_name + ":" + input_hash)`; `LoadFromLog` (batch) and `LoadFromReader` (streaming, Day 49) |
+| `pkg/mocker` | `ToolMocker` — frozen tool response server keyed by `SHA-256(tool_name + ":" + input_hash)`; `LoadFromLog` (batch) and `LoadFromReader` (streaming, Day 49), with fault injection (`Inject`, Day 48) |
+| `pkg/fault` | Synthetic failure kinds (`timeout`, `http_500`, `stale_cache`) injectable at a chosen replay step (Day 48) |
 | `pkg/export` | Trace export to object storage: zstd compression, checksums, hot/cold/expired retention (Day 45) |
 | `pkg/objectstore` | Minimal object store interface + in-memory and MinIO implementations |
 | `pkg/replay` | `Run` (Day 46) / `RunFromReader` (Day 49) — replay a recorded event log against a `ToolMocker`, batch or streaming, with an optional step limit |

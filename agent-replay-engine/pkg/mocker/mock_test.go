@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/akshantvats/agent-replay-engine/pkg/eventlog"
+	"github.com/akshantvats/agent-replay-engine/pkg/fault"
 )
 
 func rawJSON(t *testing.T, v any) json.RawMessage {
@@ -208,6 +209,57 @@ func TestMockerConcurrentRespond(t *testing.T) {
 	}
 }
 
+// threeCallLog builds a mocker with three recorded, resolvable calls —
+// enough to exercise a fault injected before, at, and after the middle step.
+func threeCallLog(t *testing.T) *ToolMocker {
+	t.Helper()
+	log := eventlog.EventLog{
+		{SeqNum: 1, Kind: eventlog.KindToolCall, ToolName: "A", InputHash: "h",
+			Payload: rawJSON(t, map[string]any{})},
+		{SeqNum: 2, Kind: eventlog.KindToolResponse, ToolName: "A", InputHash: "h",
+			Payload: rawJSON(t, map[string]any{"n": 1})},
+		{SeqNum: 3, Kind: eventlog.KindToolCall, ToolName: "B", InputHash: "h",
+			Payload: rawJSON(t, map[string]any{})},
+		{SeqNum: 4, Kind: eventlog.KindToolResponse, ToolName: "B", InputHash: "h",
+			Payload: rawJSON(t, map[string]any{"n": 2})},
+		{SeqNum: 5, Kind: eventlog.KindToolCall, ToolName: "C", InputHash: "h",
+			Payload: rawJSON(t, map[string]any{})},
+		{SeqNum: 6, Kind: eventlog.KindToolResponse, ToolName: "C", InputHash: "h",
+			Payload: rawJSON(t, map[string]any{"n": 3})},
+	}
+	m, err := LoadFromLog(log)
+	if err != nil {
+		t.Fatalf("LoadFromLog: %v", err)
+	}
+	return m
+}
+
+func TestMockerInjectFiresOnConfiguredStep(t *testing.T) {
+	cases := []struct {
+		kind    fault.Kind
+		wantErr error
+	}{
+		{fault.KindTimeout, fault.ErrTimeout},
+		{fault.KindHTTP500, fault.ErrHTTP500},
+		{fault.KindStaleCache, fault.ErrStaleCache},
+	}
+	for _, c := range cases {
+		m := threeCallLog(t)
+		m.Inject(2, c.kind)
+
+		if _, err := m.Respond("A", "h"); err != nil {
+			t.Fatalf("Respond(A) [kind=%s]: unexpected error before injected step: %v", c.kind, err)
+		}
+		_, err := m.Respond("B", "h")
+		if !errors.Is(err, c.wantErr) {
+			t.Fatalf("Respond(B) [kind=%s]: err = %v, want %v", c.kind, err, c.wantErr)
+		}
+		if _, err := m.Respond("C", "h"); err != nil {
+			t.Fatalf("Respond(C) [kind=%s]: unexpected error after injected step: %v", c.kind, err)
+		}
+	}
+}
+
 // writeLogJSONL renders log as the JSON Lines bytes LoadFromReader expects.
 func writeLogJSONL(t *testing.T, log eventlog.EventLog) []byte {
 	t.Helper()
@@ -260,6 +312,51 @@ func TestLoadFromReaderMatchesLoadFromLog(t *testing.T) {
 		}
 		if !reflect.DeepEqual(normalizeJSON(t, gotResp), normalizeJSON(t, wantResp)) {
 			t.Errorf("Respond(%s,%s): streamed=%s, want %s", call.tool, call.hash, gotResp, wantResp)
+		}
+	}
+}
+
+func TestMockerInjectDoesNotRecordFailedCallInHistory(t *testing.T) {
+	m := threeCallLog(t)
+	m.Inject(2, fault.KindTimeout)
+
+	if _, err := m.Respond("A", "h"); err != nil {
+		t.Fatalf("Respond(A): %v", err)
+	}
+	if _, err := m.Respond("B", "h"); !errors.Is(err, fault.ErrTimeout) {
+		t.Fatalf("Respond(B): err = %v, want ErrTimeout", err)
+	}
+	if _, err := m.Respond("C", "h"); err != nil {
+		t.Fatalf("Respond(C): %v", err)
+	}
+
+	want := []string{compositeKey("A", "h"), compositeKey("C", "h")}
+	got := m.CallHistory()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("CallHistory = %v, want %v (injected step B excluded)", got, want)
+	}
+}
+
+func TestMockerInjectAtStepZeroDisablesInjection(t *testing.T) {
+	m := threeCallLog(t)
+	m.Inject(2, fault.KindTimeout)
+	m.Inject(0, fault.KindTimeout)
+
+	if _, err := m.Respond("A", "h"); err != nil {
+		t.Fatalf("Respond(A): %v", err)
+	}
+	if _, err := m.Respond("B", "h"); err != nil {
+		t.Fatalf("Respond(B): unexpected error, injection should have been cleared: %v", err)
+	}
+}
+
+func TestMockerInjectBeyondCallCountNeverFires(t *testing.T) {
+	m := threeCallLog(t)
+	m.Inject(10, fault.KindTimeout)
+
+	for _, tool := range []string{"A", "B", "C"} {
+		if _, err := m.Respond(tool, "h"); err != nil {
+			t.Fatalf("Respond(%s): unexpected error: %v", tool, err)
 		}
 	}
 }
