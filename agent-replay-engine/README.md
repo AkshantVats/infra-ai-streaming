@@ -63,6 +63,12 @@ go run ./cmd/traceforge replay --log run.jsonl --trace-id trace-1 --stop-at-step
 
 `--stop-at-step` halts replay after that many recorded tool calls instead of running to `final_output` — useful to inspect a run's state right before a step you don't want to re-trigger yet, without re-running the whole trace. Omit it to replay to completion.
 
+```bash
+go run ./cmd/traceforge diff --log ab-run.jsonl --trace-a rider-a --trace-b rider-b
+```
+
+Finds the first `tool_call` step where two traces disagree, comparing `tool_name` + `input_hash` (structural, not raw-text) — see [DESIGN.md § Diff Algorithm](DESIGN.md#diff-algorithm).
+
 ## Packages
 
 | Package | Purpose |
@@ -72,7 +78,8 @@ go run ./cmd/traceforge replay --log run.jsonl --trace-id trace-1 --stop-at-step
 | `pkg/export` | Trace export to object storage: zstd compression, checksums, hot/cold/expired retention (Day 45) |
 | `pkg/objectstore` | Minimal object store interface + in-memory and MinIO implementations |
 | `pkg/replay` | `Run` — replays a recorded event log against a `ToolMocker`, with an optional step limit (Day 46) |
-| `cmd/traceforge` | CLI entry point; `replay` subcommand wraps `pkg/replay` |
+| `pkg/diff` | `Compare` — finds the first diverging `tool_call` step between two traces (Day 47) |
+| `cmd/traceforge` | CLI entry point; `replay` and `diff` subcommands |
 
 ## Running Tests
 

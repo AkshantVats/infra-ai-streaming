@@ -140,3 +140,93 @@ func TestUnknownCommand(t *testing.T) {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
 }
+
+// writeDiffFixtureLog writes two traces that agree on their first two
+// tool calls (geocode, route_eta) and diverge on the third — rider-a's
+// route takes the highway, rider-b's takes a surface street.
+func writeDiffFixtureLog(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ab-run.jsonl")
+
+	lines := []string{
+		`{"seq_num":1,"span_id":"a-geo","trace_id":"rider-a","kind":"tool_call","tool_name":"geocode","input_hash":"hash-pickup","payload":{}}`,
+		`{"seq_num":2,"span_id":"b-geo","trace_id":"rider-b","kind":"tool_call","tool_name":"geocode","input_hash":"hash-pickup","payload":{}}`,
+		`{"seq_num":3,"span_id":"a-route1","trace_id":"rider-a","kind":"tool_call","tool_name":"route_eta","input_hash":"hash-route-1","payload":{}}`,
+		`{"seq_num":4,"span_id":"b-route1","trace_id":"rider-b","kind":"tool_call","tool_name":"route_eta","input_hash":"hash-route-1","payload":{}}`,
+		`{"seq_num":5,"span_id":"a-route2","trace_id":"rider-a","kind":"tool_call","tool_name":"route_eta","input_hash":"hash-highway","payload":{}}`,
+		`{"seq_num":6,"span_id":"b-route2","trace_id":"rider-b","kind":"tool_call","tool_name":"route_eta","input_hash":"hash-surface-street","payload":{}}`,
+	}
+
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return path
+}
+
+func TestDiffFindsFirstDivergingStep(t *testing.T) {
+	path := writeDiffFixtureLog(t)
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"diff", "--log", path, "--trace-a", "rider-a", "--trace-b", "rider-b"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "first divergence at step 3") {
+		t.Errorf("stdout missing step 3 divergence:\n%s", out)
+	}
+	if !strings.Contains(out, "reason: input_hash") {
+		t.Errorf("stdout missing input_hash reason:\n%s", out)
+	}
+	if !strings.Contains(out, "a-route2") || !strings.Contains(out, "b-route2") {
+		t.Errorf("stdout missing diverging span_ids:\n%s", out)
+	}
+}
+
+func TestDiffNoDivergenceWhenTracesMatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "match.jsonl")
+	lines := []string{
+		`{"seq_num":1,"trace_id":"t1","kind":"tool_call","tool_name":"geocode","input_hash":"hash-1","payload":{}}`,
+		`{"seq_num":2,"trace_id":"t2","kind":"tool_call","tool_name":"geocode","input_hash":"hash-1","payload":{}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"diff", "--log", path, "--trace-a", "t1", "--trace-b", "t2"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "no divergence") {
+		t.Errorf("stdout missing no-divergence message:\n%s", stdout.String())
+	}
+}
+
+func TestDiffUnknownTraceIDFails(t *testing.T) {
+	path := writeDiffFixtureLog(t)
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"diff", "--log", path, "--trace-a", "rider-a", "--trace-b", "trace-does-not-exist"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "no events found") {
+		t.Errorf("stderr missing no-events message:\n%s", stderr.String())
+	}
+}
+
+func TestDiffMissingRequiredFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"diff", "--log", "somewhere.jsonl"}, &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+}
