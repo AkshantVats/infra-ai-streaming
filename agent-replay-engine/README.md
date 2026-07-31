@@ -49,18 +49,30 @@ flowchart LR
   Replay --> Result
 ```
 
-`pkg/eventlog` records a live run as an ordered `.jsonl` event log. `pkg/mocker.ToolMocker` loads that log and serves each tool call's frozen response by composite key (`tool_name` + `input_hash`), so a replay never reaches a live API. The replay runner and model client shown above are Day 45+ — see [Scope for Day 44](DESIGN.md#scope-for-day-44).
+`pkg/eventlog` records a live run as an ordered `.jsonl` event log. `pkg/mocker.ToolMocker` loads that log and serves each tool call's frozen response by composite key (`tool_name` + `input_hash`), so a replay never reaches a live API. `pkg/replay.Run` walks the recorded tool-call sequence against the mocker and can halt after a chosen number of steps (`--stop-at-step`) instead of always running to the recorded `final_output`. The `Model Client` box above — a live model driving which tool calls get issued, so replay can detect model-induced divergence — is out of scope here; Day 46 replays the recorded call sequence directly. See [Scope for Day 44](DESIGN.md#scope-for-day-44).
 
 ## Design
 
 See [DESIGN.md](DESIGN.md) for the full event model, storage format, mock tool contract, and determinism rules.
 
+## CLI
+
+```bash
+go run ./cmd/traceforge replay --log run.jsonl --trace-id trace-1 --stop-at-step 6
+```
+
+`--stop-at-step` halts replay after that many recorded tool calls instead of running to `final_output` — useful to inspect a run's state right before a step you don't want to re-trigger yet, without re-running the whole trace. Omit it to replay to completion.
+
 ## Packages
 
 | Package | Purpose |
 |---|---|
-| `pkg/eventlog` | `AgentEvent` types, JSON Lines read/write, ordering + uniqueness validation |
+| `pkg/eventlog` | `AgentEvent` types, JSON Lines read/write, ordering + uniqueness validation, `FilterByTraceID` |
 | `pkg/mocker` | `ToolMocker` — frozen tool response server keyed by `SHA-256(tool_name + ":" + input_hash)` |
+| `pkg/export` | Trace export to object storage: zstd compression, checksums, hot/cold/expired retention (Day 45) |
+| `pkg/objectstore` | Minimal object store interface + in-memory and MinIO implementations |
+| `pkg/replay` | `Run` — replays a recorded event log against a `ToolMocker`, with an optional step limit (Day 46) |
+| `cmd/traceforge` | CLI entry point; `replay` subcommand wraps `pkg/replay` |
 
 ## Running Tests
 

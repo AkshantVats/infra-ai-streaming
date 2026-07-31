@@ -163,3 +163,28 @@ func TestEmptyLogIsValid(t *testing.T) {
 		t.Errorf("First on empty log: got %v, want ErrNotFound", err)
 	}
 }
+
+func TestFilterByTraceID(t *testing.T) {
+	log := EventLog{
+		{SeqNum: 3, TraceID: "trace-b", Kind: KindPrompt, Payload: mustPayload(t, map[string]any{})},
+		{SeqNum: 1, TraceID: "trace-a", Kind: KindPrompt, Payload: mustPayload(t, map[string]any{})},
+		{SeqNum: 2, TraceID: "trace-a", Kind: KindToolCall, Payload: mustPayload(t, map[string]any{})},
+	}
+
+	got := log.FilterByTraceID("trace-a")
+	if len(got) != 2 {
+		t.Fatalf("len(FilterByTraceID) = %d, want 2", len(got))
+	}
+	if got[0].SeqNum != 1 || got[1].SeqNum != 2 {
+		t.Fatalf("FilterByTraceID not in seq_num order: %+v", got)
+	}
+	for _, ev := range got {
+		if ev.TraceID != "trace-a" {
+			t.Errorf("FilterByTraceID leaked event from trace_id=%q", ev.TraceID)
+		}
+	}
+
+	if got := log.FilterByTraceID("trace-does-not-exist"); len(got) != 0 {
+		t.Errorf("FilterByTraceID for unknown trace_id = %d events, want 0", len(got))
+	}
+}
