@@ -146,6 +146,47 @@ The replay runner does not need to understand the model's internal reasoning —
 
 ---
 
+## Diff Algorithm
+
+`traceforge diff --log <path> --trace-a <id> --trace-b <id>` finds the first point where two
+recorded traces disagree — the "first diverging span" a rider-ETA A/B test or a route-change
+regression needs to localize before reading either trace end to end.
+
+The comparison is **structural, not textual**: it walks each trace's `tool_call` events in
+`seq_num` order and compares `ToolName` + `InputHash` at each step — the same composite key
+`pkg/mocker` uses to serve frozen responses. Two steps "match" exactly when replay would serve
+the same mocked response for both. This is deliberate: a textual diff of the raw JSON payloads
+would flag every differing timestamp or request ID as a divergence even when the two traces made
+the same tool call with the same effective input. `InputHash` is already the field that strips
+that noise — `pkg/diff` diffs on it instead of re-deriving its own comparison key.
+
+```
+function compare(a: EventLog, b: EventLog) -> Result:
+    callsA = a.tool_call_events_in_seq_order()
+    callsB = b.tool_call_events_in_seq_order()
+
+    for i in 0..min(len(callsA), len(callsB)):
+        if callsA[i].tool_name != callsB[i].tool_name:
+            return divergence(step=i+1, reason=TOOL_NAME, ...)
+        if callsA[i].input_hash != callsB[i].input_hash:
+            return divergence(step=i+1, reason=INPUT_HASH, ...)
+
+    if len(callsA) != len(callsB):
+        return divergence(step=min(len)+1, reason=MISSING_IN_SHORTER_TRACE, ...)
+
+    return Result{no divergence}
+```
+
+**Why check `ToolName` before `InputHash`**: when both fields differ at the same step, a
+different tool being called at all is the more fundamental divergence — reporting "different
+tool" is more actionable than "different input," even though either alone would already prove
+the traces disagree.
+
+**Why a length mismatch (with every shared step matching) still counts as a divergence**: two
+traces where the shorter one is a strict prefix of the longer one did not "agree" — one run took
+an extra step the other never took. Reporting that as `Found() == false` would hide a real
+behavioral difference (e.g. rider-a's route needed a reroute call rider-b's never triggered).
+
 ## Scope for Day 44
 
 Day 44 delivers the event log types (`pkg/eventlog`) and mock tool architecture (`pkg/mocker`). The replay runner and model client integration are Day 45+. The goal for Day 44 is a compilable, tested foundation that the replay runner can build on.
@@ -160,5 +201,5 @@ The plan names this repo `AkshantVats/agent-replay-engine` (new standalone repo)
 
 ## Series Navigation
 
-Previous: Day 43 — tool-call-analyzer README + OpenAPI + Kafka Chaos Test
-Next: Day 45 — agent-replay-engine: Replay Runner + Model Client Interface
+Previous: Day 46 — agent-replay-engine: Replay Core + `traceforge replay --stop-at-step`
+Next: Day 48 — TBD
