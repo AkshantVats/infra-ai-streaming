@@ -115,6 +115,22 @@ func (log EventLog) First(kind EventKind) (AgentEvent, error) {
 	return found, nil
 }
 
+// FilterByTraceID returns the subset of log belonging to traceID, in SeqNum
+// order. Used to isolate one run's events out of a log file that may hold
+// events from multiple recorded runs.
+func (log EventLog) FilterByTraceID(traceID string) EventLog {
+	var out EventLog
+	for _, ev := range log {
+		if ev.TraceID == traceID {
+			out = append(out, ev)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].SeqNum < out[j].SeqNum
+	})
+	return out
+}
+
 // AllOfKind returns all events of the given kind in SeqNum order.
 func (log EventLog) AllOfKind(kind EventKind) []AgentEvent {
 	var out []AgentEvent
