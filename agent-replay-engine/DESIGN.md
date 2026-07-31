@@ -226,6 +226,44 @@ gap" case; fault injection just gives you a deliberate way to trigger it.
 `--inject-stale-cache` CLI flags is future scope, the same kind of cut Day 47 made on
 `tool_response` payload diffing: land the mechanism generally, expose one concrete CLI path now.
 
+## Streaming Replay
+
+`Run` (Day 46) takes an already-loaded `eventlog.EventLog`: the CLI got there via `eventlog.ReadJSONL`, which reads the entire log file, sorts it by `seq_num`, and hands back one in-memory slice — then `FilterByTraceID` makes a second slice scoped to the trace being replayed. Fine for a single recorded run's log file. Wrong for the production shape: one shared, rolling log file holding every trace ever recorded, where replaying trace-1 means finding it inside everyone else's traces too. `ReadJSONL` buffers all of them to find one.
+
+Day 49's target — "Replay perf: 100-step trace <3s; streaming parser memory profile" — is really a memory-bound problem wearing a perf-bound description: in-process replay of a 100-step trace is microsecond-scale regardless of how the log is read (`pkg/replay.TestRunFromReader100StepTraceUnderThreeSeconds` is a regression guard, not a real bottleneck). The actual risk is a laptop-scale `traceforge replay` OOMing against a multi-GB shared log file that happens to contain the one 100-step trace someone needs to debug.
+
+**`eventlog.Scanner`** reads the log one JSON Lines record at a time, `bufio.Scanner`-style, and never buffers the file or sorts it — it trusts the recorder's append-only ordering guarantee instead. **`mocker.LoadFromReader`** streams a log through a `Scanner` and builds a `ToolMocker` scoped to one `trace_id` in a single pass, using an index no bigger than that trace's own tool calls (a `pending` map resolves a `tool_call`/`tool_response` pair regardless of which arrives first in the stream). **`replay.RunFromReader`** streams the tool-call sequence directly, the way `Run` walks an already-loaded slice.
+
+```
+function RunFromReader(r, traceID, mocker, stopAtStep):
+    for event in Scanner(r):
+        if event.trace_id != traceID: continue
+        if event.kind == TOOL_CALL:
+            if stopAtStep > 0 and steps >= stopAtStep:
+                return Result{StoppedEarly: true, ...}   # stop reading r right here
+            mocker.Respond(event.tool_name, event.input_hash)
+            steps += 1
+        if event.kind == FINAL_OUTPUT and finalPayload is unset:
+            finalPayload = event.payload
+    # reached EOF without stopping early
+    return Result{Output: finalPayload.text, ...}
+```
+
+**The `traceforge replay` CLI now streams by default** (see `cmd/traceforge/main.go`), reading `--log` twice — once for `LoadFromReader`, once for `RunFromReader` — rather than once for `ReadJSONL`. Two sequential passes instead of one traded for never holding the whole file at once.
+
+### What the benchmark actually shows
+
+`BenchmarkRunBatchVsStream` (`pkg/replay/replay_test.go`) replays a 100-step target trace out of a shared log with 50 other 200-step traces mixed in (51 traces, ~3.7MB) — `go test ./pkg/replay/ -bench BenchmarkRunBatchVsStream -benchmem -run '^$'`:
+
+| Path | Time/op | Memory/op | Allocs/op |
+|---|---|---|---|
+| `batch` (`ReadJSONL` + `Run`) | 104ms | 22.9MB | 223,627 |
+| `stream` (`RunFromReader`) | 145ms | 18.4MB | 446,678 |
+
+Streaming is **not** the strict win a "just stream it" instinct predicts. It uses ~20% less peak memory — the number that matters for not OOMing — but it's ~40% slower and allocates 2x more, because two single-pass scans each decoding every line into its own `AgentEvent` cost more than one `ReadJSONL` pass with slice growth followed by a filter. The honest tradeoff: streaming caps peak memory independent of how many *other* traces share the log file, at a real CPU and allocation cost, not a free upgrade.
+
+Where streaming wins without qualification is `--stop-at-step` on a large file: it stops reading `r` the moment the step limit is hit, instead of reading to EOF first. `TestRunFromReaderStopsEarlyWithoutReadingWholeStream` proves it structurally (a `trackingReader` records exactly how many bytes were pulled from the underlying reader); measured against a 5,000-step / 1.78MB trace with `--stop-at-step 1`, `RunFromReader` reads 65,536 bytes before returning — 3.7% of the file, exactly one scanner buffer's worth, regardless of how large the remaining 4,999 steps are. `Run`'s old path read and sorted the whole 1.78MB first no matter where `--stop-at-step` cut it off.
+
 ## Scope for Day 44
 
 Day 44 delivers the event log types (`pkg/eventlog`) and mock tool architecture (`pkg/mocker`). The replay runner and model client integration are Day 45+. The goal for Day 44 is a compilable, tested foundation that the replay runner can build on.
@@ -240,5 +278,5 @@ The plan names this repo `AkshantVats/agent-replay-engine` (new standalone repo)
 
 ## Series Navigation
 
-Previous: Day 47 — agent-replay-engine: Diff Engine — `traceforge diff --trace-a --trace-b`
-Next: Day 49 — TBD
+Previous: Day 47 — agent-replay-engine: `traceforge diff`, first diverging span
+Next: Day 50 — TBD

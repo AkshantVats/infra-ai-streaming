@@ -63,6 +63,8 @@ go run ./cmd/traceforge replay --log run.jsonl --trace-id trace-1 --stop-at-step
 
 `--stop-at-step` halts replay after that many recorded tool calls instead of running to `final_output` — useful to inspect a run's state right before a step you don't want to re-trigger yet, without re-running the whole trace. Omit it to replay to completion.
 
+`replay` streams `--log` off disk rather than loading it whole (Day 49): it never holds more of the file in memory than one scanner line, and an early `--stop-at-step` stops reading the file at that point instead of reading to EOF first. See [DESIGN.md § Streaming Replay](DESIGN.md#streaming-replay) for the memory profile and the tradeoff that comes with it.
+
 ```bash
 go run ./cmd/traceforge diff --log ab-run.jsonl --trace-a rider-a --trace-b rider-b
 ```
@@ -79,14 +81,14 @@ Forces tool-call step 4 to fail with a synthetic timeout instead of serving its 
 
 | Package | Purpose |
 |---|---|
-| `pkg/eventlog` | `AgentEvent` types, JSON Lines read/write, ordering + uniqueness validation, `FilterByTraceID` |
-| `pkg/mocker` | `ToolMocker` — frozen tool response server keyed by `SHA-256(tool_name + ":" + input_hash)`, with fault injection (`Inject`) |
+| `pkg/eventlog` | `AgentEvent` types, JSON Lines read/write, ordering + uniqueness validation, `FilterByTraceID`, streaming `Scanner` (Day 49) |
+| `pkg/mocker` | `ToolMocker` — frozen tool response server keyed by `SHA-256(tool_name + ":" + input_hash)`; `LoadFromLog` (batch) and `LoadFromReader` (streaming, Day 49), with fault injection (`Inject`, Day 48) |
 | `pkg/fault` | Synthetic failure kinds (`timeout`, `http_500`, `stale_cache`) injectable at a chosen replay step (Day 48) |
 | `pkg/export` | Trace export to object storage: zstd compression, checksums, hot/cold/expired retention (Day 45) |
 | `pkg/objectstore` | Minimal object store interface + in-memory and MinIO implementations |
-| `pkg/replay` | `Run` — replays a recorded event log against a `ToolMocker`, with an optional step limit (Day 46) |
+| `pkg/replay` | `Run` (Day 46) / `RunFromReader` (Day 49) — replay a recorded event log against a `ToolMocker`, batch or streaming, with an optional step limit |
 | `pkg/diff` | `Compare` — finds the first diverging `tool_call` step between two traces (Day 47) |
-| `cmd/traceforge` | CLI entry point; `replay` and `diff` subcommands |
+| `cmd/traceforge` | CLI entry point; `replay` (streaming) and `diff` subcommands |
 
 ## Running Tests
 
@@ -95,6 +97,14 @@ go test ./...          # full suite, no external services required
 go test -race ./...    # race detector — pkg/mocker has concurrent-access coverage
 go build ./...
 ```
+
+### Benchmarks
+
+```bash
+go test ./pkg/replay/ -bench BenchmarkRunBatchVsStream -benchmem -run '^$'
+```
+
+Compares `Run` (`ReadJSONL` the whole shared log, then filter to one trace) against `RunFromReader` (stream the shared log, only ever retain the target trace) on a 51-trace log — see [DESIGN.md § Streaming Replay](DESIGN.md#streaming-replay) for the numbers and what they mean.
 
 ## Deviation note
 

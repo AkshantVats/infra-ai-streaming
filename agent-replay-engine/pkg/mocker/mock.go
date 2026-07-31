@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/akshantvats/agent-replay-engine/pkg/eventlog"
@@ -98,6 +99,78 @@ func (m *ToolMocker) Inject(atStep int, kind fault.Kind) {
 		return
 	}
 	m.inject = &injection{atStep: atStep, kind: kind}
+}
+
+// LoadFromReader streams a recorded event log and builds a ToolMocker
+// scoped to a single traceID, without ever holding the full log in
+// memory — see LoadFromLog for the batch equivalent that takes an
+// already-loaded eventlog.EventLog. Peak memory is bounded by traceID's
+// own tool_call/tool_response events, not by how large the log file is,
+// which is what makes replaying one trace out of a multi-GB shared log
+// file practical.
+//
+// sawAny reports whether any event of any kind matched traceID, so a
+// caller can distinguish an unknown trace_id (sawAny false) from a trace
+// that exists but has, say, no completed tool calls yet.
+//
+// r is read once, forward-only: LoadFromReader pairs a tool_call with a
+// tool_response regardless of which one appears first in the stream, but
+// it cannot look ahead, so a tool_call whose tool_response never arrives
+// (order-dependent within the trace, not just "missing") is silently
+// left unpaired — Respond will surface it as ErrUnknownCall at replay
+// time, identical to LoadFromLog's behavior for an unpaired call.
+func LoadFromReader(r io.Reader, traceID string) (m *ToolMocker, sawAny bool, err error) {
+	m = &ToolMocker{responses: make(map[string]json.RawMessage)}
+
+	// callKey mirrors LoadFromLog's index key. Two maps replace that
+	// function's two AllOfKind passes: responseByCall for responses seen
+	// so far (first response wins, as in LoadFromLog), pending for calls
+	// seen before their response arrived.
+	type callKey struct {
+		toolName  string
+		inputHash string
+	}
+	responseByCall := make(map[callKey]json.RawMessage)
+	pending := make(map[callKey]struct{})
+
+	sc := eventlog.NewScanner(r)
+	for sc.Scan() {
+		ev := sc.Event()
+		if ev.TraceID != traceID {
+			continue
+		}
+		sawAny = true
+
+		switch ev.Kind {
+		case eventlog.KindToolResponse:
+			if ev.ToolName == "" || ev.InputHash == "" {
+				continue
+			}
+			k := callKey{toolName: ev.ToolName, inputHash: ev.InputHash}
+			if _, exists := responseByCall[k]; !exists {
+				responseByCall[k] = ev.Payload
+			}
+			if _, waiting := pending[k]; waiting {
+				m.responses[compositeKey(ev.ToolName, ev.InputHash)] = responseByCall[k]
+				delete(pending, k)
+			}
+		case eventlog.KindToolCall:
+			if ev.ToolName == "" || ev.InputHash == "" {
+				continue
+			}
+			k := callKey{toolName: ev.ToolName, inputHash: ev.InputHash}
+			if payload, ok := responseByCall[k]; ok {
+				m.responses[compositeKey(ev.ToolName, ev.InputHash)] = payload
+			} else {
+				pending[k] = struct{}{}
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, false, fmt.Errorf("mocker: %w", err)
+	}
+
+	return m, sawAny, nil
 }
 
 // Respond returns the frozen response payload for a tool call.
