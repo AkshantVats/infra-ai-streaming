@@ -187,6 +187,45 @@ traces where the shorter one is a strict prefix of the longer one did not "agree
 an extra step the other never took. Reporting that as `Found() == false` would hide a real
 behavioral difference (e.g. rider-a's route needed a reroute call rider-b's never triggered).
 
+## Fault Injection
+
+A recorded log only contains the response that actually happened at record time — almost always
+success. That leaves an agent's error-handling path (a tool timeout, a 500 from the backing
+service, a stale cache hit) untested unless the failure happened to occur live and get recorded,
+which is rare and not something you can aim at a specific step on demand.
+
+`pkg/fault` defines three injectable failure kinds — `timeout`, `http_500`, `stale_cache` — each
+with a sentinel error (`fault.ErrTimeout`, `fault.ErrHTTP500`, `fault.ErrStaleCache`).
+`pkg/mocker.ToolMocker.Inject(atStep int, kind fault.Kind)` configures the mocker to fail its
+`atStep`'th `Respond` call (1-based, counting every call regardless of tool name) with that
+fault's error instead of serving the step's recorded response — checked before the frozen-response
+lookup, so injection overrides even a step with a perfectly good recording.
+
+```
+function Respond(toolName, inputHash) -> (payload, err):
+    callCount += 1
+    if inject is set and callCount == inject.atStep:
+        return nil, inject.kind.Err()
+    return lookup(toolName, inputHash)  // existing frozen-response path
+```
+
+**Why key by call number, not tool name**: every other addressing scheme in this package (diff's
+`StepIndex`, replay's `--stop-at-step`) already addresses a run by its position in the tool-call
+sequence. Keying injection the same way means "fail step 4" means the same thing whether you're
+stopping before it, diffing around it, or now failing it — one mental model, not three.
+
+**Why this needed no change to `pkg/replay.Run`**: `Run` already treats any error `Respond`
+returns as a replay failure and wraps it with the step number (`replay: step %d: %w`) — that
+existing generic handling covers `ErrUnknownCall` and an injected fault identically. Verifying an
+agent's error path is exercising a code path that was already there for the messier "log has a
+gap" case; fault injection just gives you a deliberate way to trigger it.
+
+**Deliberate scope cut**: the CLI (`traceforge replay --inject-timeout <step>`) only exposes the
+`timeout` kind this round. `http_500` and `stale_cache` are implemented in `pkg/fault` and
+`ToolMocker.Inject` — a library caller can use either today — but wiring `--inject-http-500` and
+`--inject-stale-cache` CLI flags is future scope, the same kind of cut Day 47 made on
+`tool_response` payload diffing: land the mechanism generally, expose one concrete CLI path now.
+
 ## Scope for Day 44
 
 Day 44 delivers the event log types (`pkg/eventlog`) and mock tool architecture (`pkg/mocker`). The replay runner and model client integration are Day 45+. The goal for Day 44 is a compilable, tested foundation that the replay runner can build on.
@@ -201,5 +240,5 @@ The plan names this repo `AkshantVats/agent-replay-engine` (new standalone repo)
 
 ## Series Navigation
 
-Previous: Day 46 — agent-replay-engine: Replay Core + `traceforge replay --stop-at-step`
-Next: Day 48 — TBD
+Previous: Day 47 — agent-replay-engine: Diff Engine — `traceforge diff --trace-a --trace-b`
+Next: Day 49 — TBD

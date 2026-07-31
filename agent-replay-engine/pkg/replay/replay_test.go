@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/akshantvats/agent-replay-engine/pkg/eventlog"
+	"github.com/akshantvats/agent-replay-engine/pkg/fault"
 	"github.com/akshantvats/agent-replay-engine/pkg/mocker"
 )
 
@@ -174,6 +175,57 @@ func TestRunMissingFinalOutputReturnsError(t *testing.T) {
 	}
 	if result.StepsRun != 1 {
 		t.Fatalf("StepsRun = %d, want 1", result.StepsRun)
+	}
+}
+
+// TestRunSurfacesInjectedFault verifies the agent error path a caller
+// actually cares about: when a fault is injected at a step, Run stops
+// there, wraps the fault's sentinel error, and reports exactly the steps
+// that ran before it — the same shape as an unrecorded tool call, so a
+// caller's error handling doesn't need a separate case for injected faults.
+func TestRunSurfacesInjectedFault(t *testing.T) {
+	log := sevenStepLog(t)
+	m, err := mocker.LoadFromLog(log)
+	if err != nil {
+		t.Fatalf("LoadFromLog: %v", err)
+	}
+	m.Inject(4, fault.KindTimeout)
+
+	result := Run(log, m, 0)
+	if !errors.Is(result.Err, fault.ErrTimeout) {
+		t.Fatalf("Run: err = %v, want wrapping fault.ErrTimeout", result.Err)
+	}
+	if result.StepsRun != 3 {
+		t.Fatalf("StepsRun = %d, want 3 (steps before the injected step 4 failed)", result.StepsRun)
+	}
+	if len(result.CallHistory) != 3 {
+		t.Fatalf("len(CallHistory) = %d, want 3", len(result.CallHistory))
+	}
+	if result.StoppedEarly {
+		t.Fatalf("StoppedEarly = true, want false — an injected fault is a failure, not an intentional stop")
+	}
+}
+
+// TestRunStopAtStepBeforeInjectedFaultNeverTriggersIt confirms StopAtStep
+// and Inject compose the way their descriptions promise: halting before the
+// injected step means the fault never fires at all.
+func TestRunStopAtStepBeforeInjectedFaultNeverTriggersIt(t *testing.T) {
+	log := sevenStepLog(t)
+	m, err := mocker.LoadFromLog(log)
+	if err != nil {
+		t.Fatalf("LoadFromLog: %v", err)
+	}
+	m.Inject(4, fault.KindTimeout)
+
+	result := Run(log, m, 3)
+	if result.Err != nil {
+		t.Fatalf("Run: unexpected error: %v", result.Err)
+	}
+	if !result.StoppedEarly {
+		t.Fatalf("StoppedEarly = false, want true for stopAtStep=3 before the injected step")
+	}
+	if result.StepsRun != 3 {
+		t.Fatalf("StepsRun = %d, want 3", result.StepsRun)
 	}
 }
 

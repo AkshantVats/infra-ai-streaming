@@ -92,6 +92,37 @@ func TestReplayStopsAtStepSix(t *testing.T) {
 	}
 }
 
+func TestReplayInjectTimeoutFailsAtConfiguredStep(t *testing.T) {
+	path := writeFixtureLog(t)
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"replay", "--log", path, "--trace-id", "trace-a", "--inject-timeout", "4"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; stdout: %s", code, stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "injected timeout") {
+		t.Errorf("stderr missing injected-timeout message:\n%s", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "steps run: 3") {
+		t.Errorf("stdout missing steps run: 3 (steps before the injected step 4):\n%s", stdout.String())
+	}
+}
+
+func TestReplayInjectTimeoutBeyondTraceLengthNeverFires(t *testing.T) {
+	path := writeFixtureLog(t)
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"replay", "--log", path, "--trace-id", "trace-a", "--inject-timeout", "100"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "steps run: 7") {
+		t.Errorf("stdout missing steps run: 7:\n%s", stdout.String())
+	}
+}
+
 func TestReplayUnknownTraceIDFails(t *testing.T) {
 	path := writeFixtureLog(t)
 	var stdout, stderr bytes.Buffer

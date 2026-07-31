@@ -13,17 +13,29 @@ import (
 	"sync"
 
 	"github.com/akshantvats/agent-replay-engine/pkg/eventlog"
+	"github.com/akshantvats/agent-replay-engine/pkg/fault"
 )
 
 // ErrUnknownCall is returned by Respond when no recorded response exists for
 // the given tool name / input hash pair.
 var ErrUnknownCall = errors.New("mocker: no recorded response for this tool call")
 
+// injection configures a single synthetic failure to fire on a chosen
+// Respond call, keyed by call number rather than tool name — a fault is
+// injected at a point in the call sequence, the same way a recorded run's
+// tool calls are addressed by step index everywhere else in this package.
+type injection struct {
+	atStep int // 1-based Respond call number the fault fires on
+	kind   fault.Kind
+}
+
 // ToolMocker serves frozen tool responses from a recorded event log.
 type ToolMocker struct {
 	mu        sync.Mutex
 	responses map[string]json.RawMessage
 	history   []string // composite keys in Respond call order
+	callCount int
+	inject    *injection
 }
 
 // LoadFromLog builds a ToolMocker from a recorded EventLog.
@@ -70,15 +82,43 @@ func LoadFromLog(log eventlog.EventLog) (*ToolMocker, error) {
 	return m, nil
 }
 
+// Inject configures Respond to fail its atStep'th call (1-based, counting
+// every call regardless of tool name) with kind's fault instead of serving
+// the normal frozen response. atStep <= 0 clears any previously configured
+// injection. Call this before the replay run whose error path you want to
+// verify — a recorded log only ever contains the response that actually
+// happened, usually success, so this is the only way to force a step to
+// fail during replay.
+func (m *ToolMocker) Inject(atStep int, kind fault.Kind) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if atStep <= 0 {
+		m.inject = nil
+		return
+	}
+	m.inject = &injection{atStep: atStep, kind: kind}
+}
+
 // Respond returns the frozen response payload for a tool call.
 // toolName and inputHash must match a recorded KindToolCall entry that also
 // has a paired KindToolResponse. Returns ErrUnknownCall if not found.
 // Records the composite key in CallHistory in call order.
+//
+// If Inject configured a fault for this call's position in the sequence,
+// Respond returns that fault's error instead — checked before the frozen
+// response lookup, so an injected fault fires even on a step that has a
+// perfectly good recorded response.
 func (m *ToolMocker) Respond(toolName, inputHash string) (json.RawMessage, error) {
 	key := compositeKey(toolName, inputHash)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.callCount++
+	if m.inject != nil && m.callCount == m.inject.atStep {
+		return nil, fmt.Errorf("mocker: tool=%q input_hash=%q: %w", toolName, inputHash, m.inject.kind.Err())
+	}
 
 	payload, ok := m.responses[key]
 	if !ok {
