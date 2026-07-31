@@ -20,6 +20,7 @@ cargo fmt --check
 cargo clippy -p ingestion --all-targets -- -D warnings
 cargo test -p ingestion
 (cd consumer && test -z "$(gofmt -l .)" && go test ./...)
+(cd agent-replay-engine && test -z "$(gofmt -l .)" && go vet ./... && go test -race ./...)
 helm dependency update deploy/helm/lensai
 helm template lensai deploy/helm/lensai -n lensai -f deploy/helm/lensai/values-m1.yaml >/dev/null
 shellcheck -x chaos/*.sh deploy/k3d/*.sh deploy/helm/lensai/files/*.sh deploy/redpanda/*.sh scripts/*.sh
