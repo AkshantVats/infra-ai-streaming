@@ -2,6 +2,7 @@
 package mocker
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -204,5 +205,104 @@ func TestMockerConcurrentRespond(t *testing.T) {
 
 	if got := len(m.CallHistory()); got != n {
 		t.Errorf("got %d call history entries, want %d", got, n)
+	}
+}
+
+// writeLogJSONL renders log as the JSON Lines bytes LoadFromReader expects.
+func writeLogJSONL(t *testing.T, log eventlog.EventLog) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := log.WriteJSONL(&buf); err != nil {
+		t.Fatalf("WriteJSONL: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestLoadFromReaderMatchesLoadFromLog(t *testing.T) {
+	// Same fixture as TestMockerCompositeKeyIsolation, interleaved with a
+	// second trace_id — LoadFromReader must produce a mocker that behaves
+	// identically to LoadFromLog's batch equivalent, scoped to trace-1.
+	log := eventlog.EventLog{
+		{SeqNum: 1, TraceID: "trace-1", Kind: eventlog.KindToolCall, ToolName: "search_web", InputHash: "shared-hash",
+			Payload: rawJSON(t, map[string]any{"query": "kafka"})},
+		{SeqNum: 2, TraceID: "trace-2", Kind: eventlog.KindToolCall, ToolName: "search_web", InputHash: "other-hash",
+			Payload: rawJSON(t, map[string]any{"query": "unrelated"})},
+		{SeqNum: 3, TraceID: "trace-1", Kind: eventlog.KindToolResponse, ToolName: "search_web", InputHash: "shared-hash",
+			Payload: rawJSON(t, map[string]any{"source": "web"})},
+		{SeqNum: 4, TraceID: "trace-1", Kind: eventlog.KindToolCall, ToolName: "search_news", InputHash: "shared-hash",
+			Payload: rawJSON(t, map[string]any{"query": "kafka"})},
+		{SeqNum: 5, TraceID: "trace-1", Kind: eventlog.KindToolResponse, ToolName: "search_news", InputHash: "shared-hash",
+			Payload: rawJSON(t, map[string]any{"source": "news"})},
+	}
+
+	trace1 := log.FilterByTraceID("trace-1")
+	batch, err := LoadFromLog(trace1)
+	if err != nil {
+		t.Fatalf("LoadFromLog: %v", err)
+	}
+
+	streamed, sawAny, err := LoadFromReader(bytes.NewReader(writeLogJSONL(t, log)), "trace-1")
+	if err != nil {
+		t.Fatalf("LoadFromReader: %v", err)
+	}
+	if !sawAny {
+		t.Fatal("LoadFromReader: sawAny = false, want true (trace-1 has events)")
+	}
+
+	for _, call := range []struct{ tool, hash string }{
+		{"search_web", "shared-hash"},
+		{"search_news", "shared-hash"},
+	} {
+		wantResp, wantErr := batch.Respond(call.tool, call.hash)
+		gotResp, gotErr := streamed.Respond(call.tool, call.hash)
+		if (wantErr == nil) != (gotErr == nil) {
+			t.Fatalf("Respond(%s,%s): batch err=%v, streamed err=%v", call.tool, call.hash, wantErr, gotErr)
+		}
+		if !reflect.DeepEqual(normalizeJSON(t, gotResp), normalizeJSON(t, wantResp)) {
+			t.Errorf("Respond(%s,%s): streamed=%s, want %s", call.tool, call.hash, gotResp, wantResp)
+		}
+	}
+}
+
+func TestLoadFromReaderSawAnyFalseForUnknownTrace(t *testing.T) {
+	log := eventlog.EventLog{
+		{SeqNum: 1, TraceID: "trace-1", Kind: eventlog.KindPrompt, Payload: rawJSON(t, map[string]any{})},
+	}
+	_, sawAny, err := LoadFromReader(bytes.NewReader(writeLogJSONL(t, log)), "trace-does-not-exist")
+	if err != nil {
+		t.Fatalf("LoadFromReader: %v", err)
+	}
+	if sawAny {
+		t.Fatal("sawAny = true, want false for a trace_id with no matching events")
+	}
+}
+
+func TestLoadFromReaderResponseBeforeCall(t *testing.T) {
+	// tool_response recorded ahead of its tool_call in file order — a
+	// legitimate interleaving when two calls for different tools race.
+	// LoadFromReader must still pair them since it can't assume call
+	// order matches file order.
+	log := eventlog.EventLog{
+		{SeqNum: 1, TraceID: "trace-1", Kind: eventlog.KindToolResponse, ToolName: "search_web", InputHash: "h",
+			Payload: rawJSON(t, map[string]any{"source": "web"})},
+		{SeqNum: 2, TraceID: "trace-1", Kind: eventlog.KindToolCall, ToolName: "search_web", InputHash: "h",
+			Payload: rawJSON(t, map[string]any{"query": "kafka"})},
+	}
+
+	m, sawAny, err := LoadFromReader(bytes.NewReader(writeLogJSONL(t, log)), "trace-1")
+	if err != nil {
+		t.Fatalf("LoadFromReader: %v", err)
+	}
+	if !sawAny {
+		t.Fatal("sawAny = false, want true")
+	}
+
+	resp, err := m.Respond("search_web", "h")
+	if err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	val := normalizeJSON(t, resp).(map[string]any)
+	if val["source"] != "web" {
+		t.Errorf("got source=%v, want web", val["source"])
 	}
 }

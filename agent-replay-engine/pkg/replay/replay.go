@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/akshantvats/agent-replay-engine/pkg/eventlog"
 	"github.com/akshantvats/agent-replay-engine/pkg/mocker"
@@ -113,4 +114,97 @@ func Run(log eventlog.EventLog, m *mocker.ToolMocker, stopAtStep int) Result {
 		CallHistory: m.CallHistory(),
 		StepsRun:    steps,
 	}
+}
+
+// RunFromReader replays traceID's tool_call events by streaming r through
+// an eventlog.Scanner instead of requiring an already-loaded
+// eventlog.EventLog — see Run for the batch equivalent. r is read once,
+// forward-only, so peak memory is bounded by one scanner line, not by how
+// large the recorded log is; this is the CLI's default replay path (see
+// cmd/traceforge) because a laptop debugging a multi-GB production trace
+// can't afford Run's read-everything-then-sort-then-filter memory
+// profile.
+//
+// Streaming trusts r's events to already be in seq_num order, the
+// guarantee an append-only recorder provides — RunFromReader does not
+// re-sort, because buffering enough of the log to sort it would defeat
+// the point of streaming.
+//
+// When stopAtStep halts replay before EOF, RunFromReader returns
+// immediately without reading the remainder of r. It does not report how
+// many recorded steps remain, unlike the CLI's old fully-buffered path —
+// computing that would mean reading to EOF anyway, which is exactly the
+// cost early stopping exists to avoid.
+//
+// The returned error reports I/O or malformed-JSON failures reading r;
+// domain-level replay outcomes (an unrecorded tool call, a trace with no
+// final_output) are reported on Result.Err, matching Run's convention.
+func RunFromReader(r io.Reader, traceID string, m *mocker.ToolMocker, stopAtStep int) (Result, error) {
+	sc := eventlog.NewScanner(r)
+	steps := 0
+	sawToolCall := false
+	var finalPayload json.RawMessage
+
+	for sc.Scan() {
+		ev := sc.Event()
+		if ev.TraceID != traceID {
+			continue
+		}
+		switch ev.Kind {
+		case eventlog.KindToolCall:
+			sawToolCall = true
+			if stopAtStep > 0 && steps >= stopAtStep {
+				return Result{
+					CallHistory:  m.CallHistory(),
+					StepsRun:     steps,
+					StoppedEarly: true,
+				}, nil
+			}
+			if _, err := m.Respond(ev.ToolName, ev.InputHash); err != nil {
+				return Result{
+					CallHistory: m.CallHistory(),
+					StepsRun:    steps,
+					Err:         fmt.Errorf("replay: step %d: %w", steps+1, err),
+				}, nil
+			}
+			steps++
+		case eventlog.KindFinalOutput:
+			// First one wins, mirroring eventlog.EventLog.First's
+			// lowest-SeqNum contract when the stream is in order.
+			if finalPayload == nil {
+				finalPayload = ev.Payload
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return Result{CallHistory: m.CallHistory(), StepsRun: steps}, fmt.Errorf("replay: %w", err)
+	}
+
+	if !sawToolCall {
+		return Result{Err: ErrEmptyTrace}, nil
+	}
+	if finalPayload == nil {
+		return Result{
+			CallHistory: m.CallHistory(),
+			StepsRun:    steps,
+			Err:         ErrNoFinalOutput,
+		}, nil
+	}
+
+	var payload struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(finalPayload, &payload); err != nil {
+		return Result{
+			CallHistory: m.CallHistory(),
+			StepsRun:    steps,
+			Err:         fmt.Errorf("replay: decode final_output payload: %w", err),
+		}, nil
+	}
+
+	return Result{
+		Output:      payload.Text,
+		CallHistory: m.CallHistory(),
+		StepsRun:    steps,
+	}, nil
 }

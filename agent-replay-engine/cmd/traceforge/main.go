@@ -60,36 +60,40 @@ func runReplay(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	f, err := os.Open(*logPath)
+	// Two streaming passes over the same file — one to build the mocker's
+	// frozen responses, one to walk the tool_call sequence — replace the
+	// old single ReadJSONL-then-sort-then-filter load. Neither pass ever
+	// holds the whole log in memory, which is what makes `traceforge
+	// replay` usable against a trace file too large to fit on a laptop.
+	// See pkg/replay.RunFromReader's doc comment for the tradeoffs.
+	respF, err := os.Open(*logPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
 		return 1
 	}
-	defer f.Close()
-
-	full, err := eventlog.ReadJSONL(f)
+	m, sawAny, err := mocker.LoadFromReader(respF, *traceID)
+	respF.Close()
 	if err != nil {
-		fmt.Fprintf(stderr, "traceforge replay: reading log: %v\n", err)
+		fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
 		return 1
 	}
-
-	log := full.FilterByTraceID(*traceID)
-	if len(log) == 0 {
+	if !sawAny {
 		fmt.Fprintf(stderr, "traceforge replay: no events found for trace_id=%q in %s\n", *traceID, *logPath)
 		return 1
 	}
-	if err := log.Validate(); err != nil {
-		fmt.Fprintf(stderr, "traceforge replay: invalid log: %v\n", err)
-		return 1
-	}
 
-	m, err := mocker.LoadFromLog(log)
+	replayF, err := os.Open(*logPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
 		return 1
 	}
+	defer replayF.Close()
 
-	result := replay.Run(log, m, *stopAtStep)
+	result, err := replay.RunFromReader(replayF, *traceID, m, *stopAtStep)
+	if err != nil {
+		fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
+		return 1
+	}
 
 	fmt.Fprintf(stdout, "trace_id: %s\n", *traceID)
 	fmt.Fprintf(stdout, "steps run: %d\n", result.StepsRun)
@@ -99,8 +103,11 @@ func runReplay(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if result.StoppedEarly {
-		fmt.Fprintf(stdout, "stopped early: halted at --stop-at-step=%d, %d recorded step(s) remain unreplayed\n",
-			*stopAtStep, len(log.AllOfKind(eventlog.KindToolCall))-result.StepsRun)
+		// Unlike the old fully-buffered path, streaming replay does not
+		// report how many recorded steps remain: computing that means
+		// reading the rest of the file, which defeats the point of
+		// --stop-at-step for a log too large to read in full.
+		fmt.Fprintf(stdout, "stopped early: halted at --stop-at-step=%d\n", *stopAtStep)
 		return 0
 	}
 
