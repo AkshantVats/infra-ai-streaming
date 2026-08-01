@@ -89,6 +89,8 @@ Forces tool-call step 4 to fail with a synthetic timeout instead of serving its 
 | `pkg/replay` | `Run` (Day 46) / `RunFromReader` (Day 49) — replay a recorded event log against a `ToolMocker`, batch or streaming, with an optional step limit |
 | `pkg/diff` | `Compare` — finds the first diverging `tool_call` step between two traces (Day 47) |
 | `cmd/traceforge` | CLI entry point; `replay` (streaming) and `diff` subcommands |
+| `testdata` | `sample_run.jsonl` — checked-in two-trace bundle used by `scripts/smoke_test.sh` and CI (Day 50) |
+| `scripts` | `smoke_test.sh` — builds the real binary and runs it against `testdata/sample_run.jsonl` (Day 50) |
 
 ## Running Tests
 
@@ -96,6 +98,7 @@ Forces tool-call step 4 to fail with a synthetic timeout instead of serving its 
 go test ./...          # full suite, no external services required
 go test -race ./...    # race detector — pkg/mocker has concurrent-access coverage
 go build ./...
+bash scripts/smoke_test.sh   # builds the real binary, runs it against testdata/sample_run.jsonl (Day 50)
 ```
 
 ### Benchmarks
@@ -105,6 +108,48 @@ go test ./pkg/replay/ -bench BenchmarkRunBatchVsStream -benchmem -run '^$'
 ```
 
 Compares `Run` (`ReadJSONL` the whole shared log, then filter to one trace) against `RunFromReader` (stream the shared log, only ever retain the target trace) on a 51-trace log — see [DESIGN.md § Streaming Replay](DESIGN.md#streaming-replay) for the numbers and what they mean.
+
+## On-Call Runbook — Debugging a Bad Agent Run
+
+Seven copy-paste steps, in the order an on-call engineer actually needs them. Every command
+below is the exact CLI already documented above — nothing here is a new tool, just a fixed
+order to run the existing ones in.
+
+1. **Pull the trace.** Get `trace_id` from the alert/incident and confirm it's in the log you
+   have on hand:
+   ```bash
+   grep '"trace_id":"<trace_id>"' run.jsonl | head -1
+   ```
+2. **Reproduce without guessing.** Replay the whole trace and read the recorded output —
+   don't speculate about what the agent did, replay tells you:
+   ```bash
+   go run ./cmd/traceforge replay --log run.jsonl --trace-id <trace_id>
+   ```
+3. **Isolate the step.** If you already suspect which tool call went wrong, halt right before
+   it instead of reading through the whole run:
+   ```bash
+   go run ./cmd/traceforge replay --log run.jsonl --trace-id <trace_id> --stop-at-step <N>
+   ```
+4. **Compare against a known-good trace.** If you have a trace that behaved correctly, `diff`
+   finds the first step where the two disagree instead of you eyeballing two full logs:
+   ```bash
+   go run ./cmd/traceforge diff --log run.jsonl --trace-a <good_trace_id> --trace-b <trace_id>
+   ```
+5. **Force the failure mode on demand.** Don't wait for the timeout/500/stale-cache to happen
+   live again — inject it at the step you suspect and watch the agent's error path fire:
+   ```bash
+   go run ./cmd/traceforge replay --log run.jsonl --trace-id <trace_id> --inject-timeout <N>
+   ```
+6. **Stop before the blast radius.** Before re-running anything that has a real side effect
+   (a charge, a page, a write), use `--stop-at-step` to halt one step short of it — see
+   [DESIGN.md § Replay Algorithm](DESIGN.md#replay-algorithm) for why replay never re-triggers
+   a step it hasn't been told to run.
+7. **Confirm the fix against the sample bundle before shipping.** Once the underlying bug is
+   patched, run the same smoke check CI runs against the checked-in fixture — if it passes here,
+   it passes in CI:
+   ```bash
+   bash scripts/smoke_test.sh
+   ```
 
 ## Deviation note
 

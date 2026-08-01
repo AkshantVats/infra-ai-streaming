@@ -264,6 +264,31 @@ Streaming is **not** the strict win a "just stream it" instinct predicts. It use
 
 Where streaming wins without qualification is `--stop-at-step` on a large file: it stops reading `r` the moment the step limit is hit, instead of reading to EOF first. `TestRunFromReaderStopsEarlyWithoutReadingWholeStream` proves it structurally (a `trackingReader` records exactly how many bytes were pulled from the underlying reader); measured against a 5,000-step / 1.78MB trace with `--stop-at-step 1`, `RunFromReader` reads 65,536 bytes before returning — 3.7% of the file, exactly one scanner buffer's worth, regardless of how large the remaining 4,999 steps are. `Run`'s old path read and sorted the whole 1.78MB first no matter where `--stop-at-step` cut it off.
 
+## CI Smoke Test and the On-Call Runbook
+
+Every package's unit tests run against in-memory `eventlog.EventLog` fixtures built by hand in
+Go — that proves each package's logic is correct in isolation, but it never runs the actual
+`traceforge` binary the way an on-call engineer would type it: as a compiled CLI, reading a real
+file off disk, exiting with a real status code. A regression in flag parsing, file handling, or
+how `main.go` wires the packages together could pass every package's tests and still break the
+CLI a human runs at 3am.
+
+`testdata/sample_run.jsonl` is a small, checked-in two-trace bundle (`trace-checkout-1001` /
+`trace-checkout-1002`, sharing an identical `check_inventory` call and diverging at
+`charge_payment`) built specifically to exercise every CLI path in one fixture: full replay,
+`--stop-at-step`, `diff`, and `--inject-timeout`. `scripts/smoke_test.sh` builds the real binary
+with `go build` and runs all four against it, asserting on actual stdout/stderr and exit codes —
+CI runs this as its own step (`Go test (agent-replay-engine)` still covers the package-level
+unit suite; the smoke test is additive, not a replacement).
+
+The seven-step on-call runbook in the README exists for the same reason the smoke test does:
+every debugging session so far (Day 46's `--stop-at-step`, Day 47's `diff`, Day 48's
+`--inject-timeout`) added one more capability to this CLI, but nothing tied them together into
+an order an exhausted on-call engineer can follow without re-deriving it. The runbook is that
+fixed order, and step 7 — re-running `scripts/smoke_test.sh` against the same fixture CI checks
+— is deliberately the same command in both places: what passes locally passes in CI, so a fix
+isn't "done" until that one script says so.
+
 ## Scope for Day 44
 
 Day 44 delivers the event log types (`pkg/eventlog`) and mock tool architecture (`pkg/mocker`). The replay runner and model client integration are Day 45+. The goal for Day 44 is a compilable, tested foundation that the replay runner can build on.
@@ -278,5 +303,6 @@ The plan names this repo `AkshantVats/agent-replay-engine` (new standalone repo)
 
 ## Series Navigation
 
-Previous: Day 47 — agent-replay-engine: `traceforge diff`, first diverging span
-Next: Day 50 — TBD
+Previous: Day 49 — agent-replay-engine: Streaming Replay — `eventlog.Scanner` + `RunFromReader`
+Day 50 — agent-replay-engine: CI smoke test against a sample bundle + on-call runbook
+Next: Day 51 — TBD

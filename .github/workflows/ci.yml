@@ -64,6 +64,9 @@ jobs:
       - name: Go test (agent-replay-engine)
         run: cd agent-replay-engine && go test -race ./...
 
+      - name: Smoke test — traceforge CLI against sample bundle (agent-replay-engine)
+        run: cd agent-replay-engine && bash scripts/smoke_test.sh
+
   helm:
     runs-on: ubuntu-latest
     steps:
