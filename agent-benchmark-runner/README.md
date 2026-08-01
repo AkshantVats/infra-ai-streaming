@@ -16,6 +16,12 @@ run outcomes and one task file, not a judgment call made after reading transcrip
 go test ./...
 ```
 
+Run the ClickHouse-touching tests (skipped by default) against a local instance:
+
+```bash
+CLICKHOUSE_DSN="clickhouse://localhost:9000" go test -tags=integration ./pkg/store/...
+```
+
 ## Architecture
 
 ```mermaid
@@ -64,6 +70,31 @@ two-agent divergence is computed and reported separately from pass/fail.
 | `pkg/task` | `Task` and `Criterion` types, YAML loading, structural validation |
 | `pkg/criteria` | Grades one run's outcome against a task's success criteria |
 | `pkg/compare` | Grades two agents on the same task and reports their first tool-call divergence |
+| `pkg/orchestrator` | Runs a Task N times against one agent under bounded concurrency; summarizes pass rate (with a 95% CI) and step-count median/P95 |
+| `pkg/store` | Persists an orchestrator batch to ClickHouse's `benchmark_runs` table, one row per repetition |
+
+## Running N Times
+
+A single run against a Task is an anecdote, not a benchmark — see
+[DESIGN.md](DESIGN.md#running-a-task-n-times-day-52) for why `pkg/orchestrator` bounds
+concurrency, derives a distinct reproducible seed per repetition, and reports a pass rate
+with a confidence interval instead of one pass/fail.
+
+```go
+cfg := orchestrator.Config{
+    Task:        t,
+    AgentName:   "agent-a",
+    Repetitions: 30,
+    MaxParallel: 4, // bounded — see DESIGN.md's "Why Bounded Parallelism"
+}
+results, err := orchestrator.Run(ctx, cfg, myAgentFunc)
+summary := orchestrator.Summarize(results)
+// summary.PassRate, summary.CILow/CIHigh, summary.MedianSteps, summary.P95Steps
+
+writer, err := store.NewClickHouseWriter(ctx, dsn)
+records := store.NewRunRecords(t.TaskID, cfg.AgentName, results, time.Now().UTC())
+err = writer.WriteRuns(ctx, records)
+```
 
 ## Sample task
 
