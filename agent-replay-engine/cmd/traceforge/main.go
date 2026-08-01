@@ -27,10 +27,10 @@ func main() {
 // built binary.
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: traceforge <command> [flags]")
-		fmt.Fprintln(stderr, "commands:")
-		fmt.Fprintln(stderr, "  replay --log <path> --trace-id <id> [--stop-at-step N] [--inject-timeout N]")
-		fmt.Fprintln(stderr, "  diff --log <path> --trace-a <id> --trace-b <id>")
+		_, _ = fmt.Fprintln(stderr, "usage: traceforge <command> [flags]")
+		_, _ = fmt.Fprintln(stderr, "commands:")
+		_, _ = fmt.Fprintln(stderr, "  replay --log <path> --trace-id <id> [--stop-at-step N] [--inject-timeout N]")
+		_, _ = fmt.Fprintln(stderr, "  diff --log <path> --trace-a <id> --trace-b <id>")
 		return 2
 	}
 
@@ -40,7 +40,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "diff":
 		return runDiff(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "traceforge: unknown command %q\n", args[0])
+		_, _ = fmt.Fprintf(stderr, "traceforge: unknown command %q\n", args[0])
 		return 2
 	}
 }
@@ -57,7 +57,7 @@ func runReplay(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *logPath == "" || *traceID == "" {
-		fmt.Fprintln(stderr, "traceforge replay: --log and --trace-id are required")
+		_, _ = fmt.Fprintln(stderr, "traceforge replay: --log and --trace-id are required")
 		fs.Usage()
 		return 2
 	}
@@ -70,26 +70,26 @@ func runReplay(args []string, stdout, stderr io.Writer) int {
 	// See pkg/replay.RunFromReader's doc comment for the tradeoffs.
 	respF, err := os.Open(*logPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
 		return 1
 	}
 	m, sawAny, err := mocker.LoadFromReader(respF, *traceID)
-	respF.Close()
+	_ = respF.Close()
 	if err != nil {
-		fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
 		return 1
 	}
 	if !sawAny {
-		fmt.Fprintf(stderr, "traceforge replay: no events found for trace_id=%q in %s\n", *traceID, *logPath)
+		_, _ = fmt.Fprintf(stderr, "traceforge replay: no events found for trace_id=%q in %s\n", *traceID, *logPath)
 		return 1
 	}
 
 	replayF, err := os.Open(*logPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
 		return 1
 	}
-	defer replayF.Close()
+	defer func() { _ = replayF.Close() }()
 
 	if *injectTimeoutAt > 0 {
 		m.Inject(*injectTimeoutAt, fault.KindTimeout)
@@ -97,15 +97,15 @@ func runReplay(args []string, stdout, stderr io.Writer) int {
 
 	result, err := replay.RunFromReader(replayF, *traceID, m, *stopAtStep)
 	if err != nil {
-		fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "traceforge replay: %v\n", err)
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "trace_id: %s\n", *traceID)
-	fmt.Fprintf(stdout, "steps run: %d\n", result.StepsRun)
+	_, _ = fmt.Fprintf(stdout, "trace_id: %s\n", *traceID)
+	_, _ = fmt.Fprintf(stdout, "steps run: %d\n", result.StepsRun)
 
 	if result.Err != nil {
-		fmt.Fprintf(stderr, "traceforge replay: %v\n", result.Err)
+		_, _ = fmt.Fprintf(stderr, "traceforge replay: %v\n", result.Err)
 		return 1
 	}
 	if result.StoppedEarly {
@@ -113,11 +113,11 @@ func runReplay(args []string, stdout, stderr io.Writer) int {
 		// report how many recorded steps remain: computing that means
 		// reading the rest of the file, which defeats the point of
 		// --stop-at-step for a log too large to read in full.
-		fmt.Fprintf(stdout, "stopped early: halted at --stop-at-step=%d\n", *stopAtStep)
+		_, _ = fmt.Fprintf(stdout, "stopped early: halted at --stop-at-step=%d\n", *stopAtStep)
 		return 0
 	}
 
-	fmt.Fprintf(stdout, "output: %s\n", result.Output)
+	_, _ = fmt.Fprintf(stdout, "output: %s\n", result.Output)
 	return 0
 }
 
@@ -132,50 +132,50 @@ func runDiff(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *logPath == "" || *traceA == "" || *traceB == "" {
-		fmt.Fprintln(stderr, "traceforge diff: --log, --trace-a and --trace-b are required")
+		_, _ = fmt.Fprintln(stderr, "traceforge diff: --log, --trace-a and --trace-b are required")
 		fs.Usage()
 		return 2
 	}
 
 	f, err := os.Open(*logPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "traceforge diff: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "traceforge diff: %v\n", err)
 		return 1
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	full, err := eventlog.ReadJSONL(f)
 	if err != nil {
-		fmt.Fprintf(stderr, "traceforge diff: reading log: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "traceforge diff: reading log: %v\n", err)
 		return 1
 	}
 
 	logA := full.FilterByTraceID(*traceA)
 	logB := full.FilterByTraceID(*traceB)
 	if len(logA) == 0 {
-		fmt.Fprintf(stderr, "traceforge diff: no events found for trace_id=%q (--trace-a) in %s\n", *traceA, *logPath)
+		_, _ = fmt.Fprintf(stderr, "traceforge diff: no events found for trace_id=%q (--trace-a) in %s\n", *traceA, *logPath)
 		return 1
 	}
 	if len(logB) == 0 {
-		fmt.Fprintf(stderr, "traceforge diff: no events found for trace_id=%q (--trace-b) in %s\n", *traceB, *logPath)
+		_, _ = fmt.Fprintf(stderr, "traceforge diff: no events found for trace_id=%q (--trace-b) in %s\n", *traceB, *logPath)
 		return 1
 	}
 
 	result := diff.Compare(logA, logB)
 
-	fmt.Fprintf(stdout, "trace_a: %s (%d tool calls)\n", *traceA, result.StepsTotalA)
-	fmt.Fprintf(stdout, "trace_b: %s (%d tool calls)\n", *traceB, result.StepsTotalB)
+	_, _ = fmt.Fprintf(stdout, "trace_a: %s (%d tool calls)\n", *traceA, result.StepsTotalA)
+	_, _ = fmt.Fprintf(stdout, "trace_b: %s (%d tool calls)\n", *traceB, result.StepsTotalB)
 
 	if !result.Found() {
-		fmt.Fprintf(stdout, "no divergence — %d shared step(s) matched\n", result.StepsCompared)
+		_, _ = fmt.Fprintf(stdout, "no divergence — %d shared step(s) matched\n", result.StepsCompared)
 		return 0
 	}
 
 	d := result.Divergence
-	fmt.Fprintf(stdout, "first divergence at step %d (%d matching step(s) before it):\n", d.StepIndex, result.StepsCompared)
-	fmt.Fprintf(stdout, "  reason: %s\n", d.Reason)
-	fmt.Fprintf(stdout, "  trace_a: span_id=%s tool_name=%s\n", valueOr(d.SpanIDA, "<none>"), valueOr(d.ToolNameA, "<none>"))
-	fmt.Fprintf(stdout, "  trace_b: span_id=%s tool_name=%s\n", valueOr(d.SpanIDB, "<none>"), valueOr(d.ToolNameB, "<none>"))
+	_, _ = fmt.Fprintf(stdout, "first divergence at step %d (%d matching step(s) before it):\n", d.StepIndex, result.StepsCompared)
+	_, _ = fmt.Fprintf(stdout, "  reason: %s\n", d.Reason)
+	_, _ = fmt.Fprintf(stdout, "  trace_a: span_id=%s tool_name=%s\n", valueOr(d.SpanIDA, "<none>"), valueOr(d.ToolNameA, "<none>"))
+	_, _ = fmt.Fprintf(stdout, "  trace_b: span_id=%s tool_name=%s\n", valueOr(d.SpanIDB, "<none>"), valueOr(d.ToolNameB, "<none>"))
 	return 0
 }
 
