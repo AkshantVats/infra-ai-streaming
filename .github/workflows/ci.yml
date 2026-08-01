@@ -67,6 +67,17 @@ jobs:
       - name: Smoke test — traceforge CLI against sample bundle (agent-replay-engine)
         run: cd agent-replay-engine && bash scripts/smoke_test.sh
 
+      - name: gofmt (check, agent-benchmark-runner)
+        run: |
+          cd agent-benchmark-runner
+          test -z "$(gofmt -l .)"
+
+      - name: Go vet (agent-benchmark-runner)
+        run: cd agent-benchmark-runner && go vet ./...
+
+      - name: Go test (agent-benchmark-runner)
+        run: cd agent-benchmark-runner && go test -race ./...
+
   helm:
     runs-on: ubuntu-latest
     steps:
