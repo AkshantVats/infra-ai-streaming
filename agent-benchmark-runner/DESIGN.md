@@ -116,6 +116,84 @@ future runner) rather than produced by executing a live agent. Wiring an actual 
 process up to produce a `RunOutcome`, and a CLI to drive the whole comparison from two
 task YAML files, is out of scope for Day 51.
 
+## Running a Task N Times (Day 52)
+
+A single run against a Task is an anecdote, not a benchmark. LLM agents are
+non-deterministic in practice even holding the task, seed, and prompt fixed — tool
+latency jitter, retries, and provider-side sampling all inject variance a single run
+can't separate from real behavior. `pkg/orchestrator.Run` executes a Task `Repetitions`
+times against one agent and returns one `RunResult` per repetition; `Summarize` turns
+that batch into a distribution (pass rate with a confidence interval, median and P95 of
+tool-call step count) instead of one pass/fail.
+
+### Why Bounded Parallelism
+
+An agent run makes real outbound calls — to a model provider, to tools. Firing all N
+repetitions at once turns a benchmark into a self-inflicted burst that can trip the very
+rate limits the agent under test would hit in production: an unrepresentative failure
+mode, not a signal about the agent. `Config.MaxParallel` bounds concurrency the same way
+a load-testing tool bounds virtual users — it names its own concurrency instead of
+borrowing it as a side effect of a loop. `Run` enforces the bound with a fixed-size
+semaphore channel, not an unbounded goroutine-per-repetition fan-out.
+
+**Options considered:**
+
+| Option | Rejected because |
+|---|---|
+| Unbounded fan-out (one goroutine per repetition) | Fastest wall-clock, but the caller becomes the rate-limit violator — the exact failure this package exists to avoid confusing with agent behavior |
+| Serial, one repetition at a time | Safe, but a 30-run batch takes 30x as long for no benefit once the downstream capacity is known |
+| Fixed-size worker pool (chosen) | Bounded and predictable — the concurrency budget is a parameter instead of an accident |
+| Adaptive/AIMD-style dynamic concurrency | The textbook "better" answer, but out of scope: a fixed pool sized from known downstream capacity solves the actual problem without a feedback controller tuning itself against a benchmark run |
+
+### Why the Seed Is Derived, Not Shared, Per Repetition
+
+Day 51 pinned the seed to the *task* so two agents being compared see the same
+randomness. Day 52 runs N repetitions of *one* task; reusing that same seed N times would
+make every repetition identical, and a median or P95 computed over N identical numbers is
+not evidence of anything. `deriveSeed(base, i)` hashes `(base, repetitionIndex)` to give
+each repetition its own reproducible draw, so a full N-run batch still reproduces
+byte-for-byte from a single recorded base seed. A simple `base + i` offset was rejected:
+several common PRNGs correlate poorly across seeds that differ by a small constant, which
+would bias exactly the run-to-run variance this package exists to measure honestly.
+
+### Summarizing N Runs
+
+`Summarize` reports a pass rate with a 95% **Wilson score interval**, not the naive
+normal (Wald) approximation. Wald produces nonsensical bounds — below 0, above 1, or a
+zero-width interval at `k=0` or `k=n` — at exactly the small sample sizes (10–30 runs) a
+benchmark batch typically has; Wilson stays within `[0, 1]` and has positive width even
+at the extremes. Median and P95 step count are computed by linear interpolation between
+closest ranks over repetitions whose `agentFn` call completed — a repetition whose run
+errored (timeout, transport failure) contributes no statistical signal about the agent's
+*behavior*, so it counts toward `N` but is excluded from `Completed`, `PassRate`, and the
+step-count percentiles.
+
+### Persistence Is an Injected Writer
+
+`pkg/orchestrator` has no ClickHouse dependency, matching Day 51's no-I/O discipline for
+`pkg/task`/`pkg/criteria`/`pkg/compare` — `Run` returns `[]RunResult` and a caller decides
+whether and where to persist it. `pkg/store` sits one layer up: `Writer` is an interface
+(`WriteRuns(ctx, []RunRecord) error`), and `ClickHouseWriter` is the only implementation
+today, over `github.com/ClickHouse/clickhouse-go/v2`. This is also why `orchestrator`'s
+tests need no database, and why `store`'s ClickHouse-touching tests live behind a
+`//go:build integration` tag (skipped without `CLICKHOUSE_DSN` set) — the same pattern
+`consumer/internal/clickhouse` already uses.
+
+`benchmark_runs` (`pkg/store/schema/001_benchmark_runs.sql`) stores one row per
+repetition, not one row per batch: a pre-aggregated per-batch row would need
+recomputing every time a later repetition's data shifts the median or P95, while a raw
+per-repetition row lets any consumer — `Summarize`, a Grafana panel, an ad-hoc
+`SELECT quantile(0.95)(step_count)` — compute its own statistic from source rows instead
+of trusting a stale pre-aggregated one.
+
+## Scope for Day 52
+
+`pkg/orchestrator` and `pkg/store` still take `AgentFunc`/`RunOutcome` as caller-supplied
+inputs — wiring an actual agent process invocation remains out of scope, as it was for
+Day 51. A CLI that reads a task YAML, drives N repetitions against a real agent process,
+and writes the results to ClickHouse end-to-end is a natural Day 53+ candidate, not part
+of Day 52.
+
 ## File Layout
 
 ```
@@ -134,6 +212,18 @@ pkg/
   compare/
     compare.go                     (NEW — Day 51: AgentRun, Divergence, Compare)
     compare_test.go                (NEW — Day 51: 6 tests)
+  orchestrator/
+    orchestrator.go                (NEW — Day 52: AgentFunc, Config, RunResult, Run, deriveSeed)
+    orchestrator_test.go           (NEW — Day 52: bounded parallelism, seed derivation, partial failure, config validation, cancellation)
+    summary.go                     (NEW — Day 52: Summary, Summarize, Wilson interval, percentile)
+    summary_test.go                (NEW — Day 52: Wilson interval fixtures, median/P95 fixtures)
+  store/
+    writer.go                      (NEW — Day 52: RunRecord, NewRunRecords, Writer, ClickHouseWriter)
+    writer_test.go                 (NEW — Day 52: RunResult -> RunRecord mapping, no ClickHouse dependency)
+    integration_test.go            (NEW — Day 52: //go:build integration, skips without CLICKHOUSE_DSN)
+    schema/
+      001_benchmark_runs.sql       (NEW — Day 52: benchmark_runs DDL)
+      002_apply.sh                 (NEW — Day 52: applies schema files in order)
 ```
 
 ## Acceptance Criteria
@@ -141,10 +231,10 @@ pkg/
 ```bash
 gofmt -l .           # empty
 go vet ./...         # exits 0
-go test -race ./...  # exits 0, 22 tests pass
+go test -race ./...  # exits 0
 ```
 
 ## Series Navigation
 
-Previous: Day 50 — agent-replay-engine: CI Smoke Test Against a Sample Bundle + On-Call Runbook
-Next: Day 52 — TBD
+Previous: Day 51 — agent-benchmark-runner: DESIGN.md — Task YAML, Compare Two Agents, Success Criteria
+Next: Day 53 — TBD
