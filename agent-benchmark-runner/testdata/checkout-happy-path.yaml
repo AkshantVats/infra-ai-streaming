@@ -1,0 +1,14 @@
+task_id: checkout-happy-path
+seed: 42
+prompt: "Complete a checkout for cart ID 8842."
+timeout_seconds: 30
+tools_allowed:
+  - check_inventory
+  - charge_payment
+success_criteria:
+  - type: final_output_contains
+    value: "order confirmed"
+  - type: tool_call_sequence
+    values: ["check_inventory", "charge_payment"]
+  - type: max_tool_calls
+    max: 5
