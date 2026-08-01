@@ -121,6 +121,6 @@ func runOne(ctx context.Context, cfg Config, agentFn AgentFunc, i int, seed int6
 // honestly. Hashing (base, i) decorrelates the derived seeds instead.
 func deriveSeed(base int64, repetitionIndex int) int64 {
 	h := fnv.New64a()
-	fmt.Fprintf(h, "%d:%d", base, repetitionIndex)
+	_, _ = fmt.Fprintf(h, "%d:%d", base, repetitionIndex) // hash.Hash.Write never errors
 	return int64(h.Sum64())
 }

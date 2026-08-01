@@ -77,7 +77,7 @@ func LoadFile(path string) (Task, error) {
 	if err != nil {
 		return Task{}, fmt.Errorf("task: open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return LoadYAML(f)
 }
 
