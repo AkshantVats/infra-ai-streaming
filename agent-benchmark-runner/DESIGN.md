@@ -238,6 +238,65 @@ not part of Day 53. There is still no CLI wiring a task YAML, a live agent proce
 a rendered report together end-to-end — each of `pkg/task`, `pkg/orchestrator`, and now
 `pkg/report` remains a library a future runner composes, not a runnable binary itself.
 
+## Flame Graph Timeline — Colored by Cost (Day 54)
+
+`RenderTimelineSVG` (Day 53) answers "where did two agents' sequences stop agreeing" —
+every box is the same fixed width, and color only ever means matched, diverged, or beyond
+the divergence point. It has no notion of cost, because divergence and cost are
+orthogonal questions: two runs can agree on every tool call and still differ wildly in
+what those calls cost. Day 54 adds `pkg/report/flame.go`, a second SVG renderer that
+answers the cost question the same way a CPU flame graph answers "which function ate the
+time" — width proportional to cost, color on a heat gradient, the single most expensive
+call marked.
+
+### Why `CostReport` Wraps `Report`
+
+`CostReport` embeds `Report` and adds `CostsA`/`CostsB []float64` rather than adding those
+two fields to `Report` itself. Every caller that builds a `Report` from a `compare.Result`
+today — `RenderMarkdown`, `RenderJSON`, `RenderTimelineSVG`, and their tests — has no cost
+data and no reason to acquire any just because a flame graph renderer now exists elsewhere
+in the package. A wrapper type that a caller opts into only when it has cost data keeps
+`Report`'s existing shape (and its JSON wire format) exactly as Day 53 shipped it.
+
+### Width Is Linear in Cost, Clamped to a Floor
+
+`widthForCost` scales linearly from a floor (`flameMinWidth`) to a ceiling
+(`flameMaxWidth`), proportional to `cost / maxCost` where `maxCost` is the single most
+expensive call across both rows. Linear, not logarithmic: a real flame graph's entire
+value is that box width *is* the measured quantity without a mental unit conversion, and
+a log scale would make a 10x-more-expensive call look only modestly wider — exactly the
+kind of understatement "wide bars are where budget died" is trying to avoid. The floor
+exists so a zero-cost call still renders as a visible, clickable box instead of collapsing
+to a zero-width sliver that reads as a rendering bug rather than "this one was free."
+
+### Rows Are Independent Strips, Not Aligned Columns
+
+Day 53's timeline aligns agent A and agent B by tool-call index, because it exists to
+answer "at which step did they diverge" — a question that only makes sense column by
+column. A flame graph's question is "where did the money go" *within* one run, and boxes
+in a real flame graph sit contiguously next to their neighbors, not aligned to some
+external index. Forcing agent A's and agent B's cost-weighted boxes into shared columns
+would make two calls at the same step index render at different widths for reasons that
+have nothing to do with when they ran — `RenderFlameGraphSVG` instead lays each row out
+independently, one box immediately after the previous one, exactly like a CPU flame graph
+stacks frames.
+
+### One Peak Marker per Row, Not a Top-N List
+
+Each row's single most expensive call gets a heavier stroke; nothing else is annotated. A
+threshold-based "flag everything over $X" scheme would need a threshold, and different
+tasks have wildly different cost distributions — there's no dollar figure that's "high"
+across every benchmark. The widest, hottest box already answers "where did the budget
+die" at a glance; a second annotation layer on top of that would be re-deriving a ranking
+the visual already encodes.
+
+### The Honest Gap
+
+`agent-benchmark-runner` has no live per-call cost telemetry — `BuildCostReport` takes
+`costsA`/`costsB` as explicit parameters, the same shape Day 53's `Build` used for tool
+call sequences it also doesn't have another source for. A future runner that instruments
+real per-tool-call dollar cost supplies it here; today's tests supply fixture costs.
+
 ## File Layout
 
 ```
@@ -273,6 +332,8 @@ pkg/
     report_test.go                 (NEW — Day 53: 7 tests)
     timeline.go                    (NEW — Day 53: RenderTimelineSVG, truncateLabel)
     timeline_test.go               (NEW — Day 53: 6 tests)
+    flame.go                       (NEW — Day 54: CostReport, BuildCostReport, RenderFlameGraphSVG)
+    flame_test.go                  (NEW — Day 54: 10 tests)
 ```
 
 ## Acceptance Criteria
@@ -285,5 +346,5 @@ go test -race ./...  # exits 0
 
 ## Series Navigation
 
-Previous: Day 52 — agent-benchmark-runner: Orchestrator — Parallel Runs, ClickHouse `benchmark_runs`, Seed Control
-Next: Day 54 — TBD
+Previous: Day 53 — agent-benchmark-runner: Report Generator — Markdown, JSON, SVG Timeline
+Next: Day 55 — agent-benchmark-runner: LensAI Integration — Benchmark Completion Emits Ingest Events

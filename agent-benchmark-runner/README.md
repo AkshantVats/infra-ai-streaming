@@ -72,7 +72,7 @@ two-agent divergence is computed and reported separately from pass/fail.
 | `pkg/compare` | Grades two agents on the same task and reports their first tool-call divergence |
 | `pkg/orchestrator` | Runs a Task N times against one agent under bounded concurrency; summarizes pass rate (with a 95% CI) and step-count median/P95 |
 | `pkg/store` | Persists an orchestrator batch to ClickHouse's `benchmark_runs` table, one row per repetition |
-| `pkg/report` | Renders a `compare.Result` as markdown, JSON, or an SVG timeline showing where two agents' tool calls diverged |
+| `pkg/report` | Renders a `compare.Result` as markdown, JSON, an SVG timeline showing where two agents' tool calls diverged, or a cost-colored SVG flame graph showing where the budget went |
 
 ## Running N Times
 
@@ -112,6 +112,24 @@ rpt := report.Build(result, runA.Outcome.ToolCallSequence, runB.Outcome.ToolCall
 report.RenderMarkdown(os.Stdout, rpt)     // PR description / Slack message
 report.RenderJSON(jsonFile, rpt)          // dashboards / alerting rules
 report.RenderTimelineSVG(svgFile, rpt)    // side-by-side visual of where the runs split
+```
+
+## Cost Flame Graph
+
+Divergence and cost are different questions — two runs can agree on every tool call and
+still differ wildly in what those calls cost. `RenderFlameGraphSVG` renders a `CostReport`
+the way a CPU flame graph renders a profile: box width proportional to cost, color on a
+cool-to-hot gradient, the single most expensive call per row marked. See
+[DESIGN.md](DESIGN.md#flame-graph-timeline--colored-by-cost-day-54) for why rows are
+independent flame-graph strips rather than divergence-aligned columns, and why only the
+single peak call is marked instead of every call above a threshold.
+
+```go
+costsA := []float64{0.004, 0.021, 0.412, 0.008} // per-call dollar cost, parallel to ToolCallsA
+costsB := []float64{0.004, 0.019}
+
+costRpt, err := report.BuildCostReport(rpt, costsA, costsB)
+report.RenderFlameGraphSVG(svgFile, costRpt)    // widest, hottest box == where the budget died
 ```
 
 ## Sample task
