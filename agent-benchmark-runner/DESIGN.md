@@ -344,6 +344,56 @@ of the current Rust struct, not a contract either dual-writer enforces. The day 
 ingest handler adds strict field validation, both `tool_call` and `benchmark_run`
 dual-writers break at once, silently, until someone notices a metric went to zero.
 
+## The First CLI, and the Subprocess Contract (Day 56)
+
+Days 51–55 built agent-benchmark-runner as a library only — every package was exercised
+through `go test`, never through a compiled binary. That was fine for grading and
+reporting logic that doesn't care what language the agent under test is written in, but
+it left one thing undone: nothing in this repo could actually *run* a benchmark against
+a real agent from the command line, and nothing made this module containerizable
+alongside the other three TraceForge components (`traceforge`, `agent-replay-engine`,
+`tool-call-analyzer`) for the Day 56 unified `docker-compose.yml`.
+
+`pkg/subprocess.AgentFunc` closes that gap by implementing `orchestrator.AgentFunc` as an
+external command instead of a linked-in Go function: the command receives `{task, seed}`
+as JSON on stdin and must write a `criteria.RunOutcome` as JSON on stdout. `cmd/traceforge`
+wires this into a `run` subcommand — load a task YAML, run it against one or two agent
+commands N times, print a pass-rate summary, and (with two agents) write a divergence
+report via `pkg/report` exactly as `pkg/compare`'s own tests already exercise it.
+
+### Why a Subprocess, Not an In-Process Interface
+
+An in-process `AgentFunc` requires the agent under test to be a Go function linked into
+this binary — fine for this repo's own tests, useless for benchmarking a Python or
+TypeScript agent, which is what real agents mostly are. A subprocess boundary makes the
+language of the agent under test irrelevant: anything that can read stdin and write
+stdout satisfies the contract. This is the same "CLI as API" bet `agent-replay-engine`
+made on Day 50 — a scriptable process boundary beats a library import when the caller and
+callee won't always share a runtime.
+
+### Killing the Whole Process Group, Not Just `sh`
+
+The naive version — `exec.CommandContext(ctx, "sh", "-c", command)` with a plain `Run()`
+— has a real bug: if `command` is not tail-call-optimized by the shell (some shells fork
+a child process for the last command in a script instead of exec'ing into it), killing
+the `sh` process on timeout does not kill that child. The child keeps the inherited
+stdout/stderr pipes open, and `cmd.Wait()` blocks reading those pipes until the child
+exits on its own — the full duration of whatever the agent under test was doing, timeout
+or not. `AgentFunc` starts the command with `Setpgid: true` and overrides `cmd.Cancel` to
+`syscall.Kill(-pid, SIGKILL)` — killing the entire process group — with `cmd.WaitDelay` as
+a backstop bound on top, per `exec.Cmd.WaitDelay`'s own documented use case for exactly
+this failure mode.
+
+### The Honest Gap
+
+The stdin/stdout JSON contract has no versioning and no schema negotiation — an agent
+process that writes a stale `RunOutcome` shape fails silently with a decode error
+attributed to "subprocess," not to which field changed. It is also single-shot per
+repetition: a subprocess that wants to keep model or tool state warm across repetitions
+(a real cost concern for anything that pays per cold start) pays that cost N times, once
+per `AgentFunc` invocation, because nothing in this contract distinguishes "first
+repetition" from "repetition 30."
+
 ## File Layout
 
 ```
@@ -384,6 +434,14 @@ pkg/
   lensai/
     writer.go                      (NEW — Day 55: Event, BatchParams, Writer, Insert, ToEvent, batchStatus)
     writer_test.go                 (NEW — Day 55: 10 tests)
+  subprocess/
+    subprocess.go                  (NEW — Day 56: AgentFunc, stdin/stdout JSON contract, process-group kill on timeout)
+    subprocess_test.go             (NEW — Day 56: 5 tests)
+cmd/
+  traceforge/
+    main.go                        (NEW — Day 56: "run" subcommand — load task, run 1-2 agents N times, summarize, compare, report)
+    main_test.go                   (NEW — Day 56: 4 tests)
+Dockerfile                          (NEW — Day 56: multi-stage build of the traceforge CLI binary)
 ```
 
 ## Acceptance Criteria
@@ -396,5 +454,5 @@ go test -race ./...  # exits 0
 
 ## Series Navigation
 
-Previous: Day 54 — agent-benchmark-runner: Flame Graph Timeline — Colored by Cost
-Next: Day 56 — traceforge-dev: unified docker-compose across all four repos
+Previous: Day 55 — LensAI Integration — Benchmark Completion Emits Ingest Events
+Next: Day 57 — Landing page draft + benchmark screenshot + LensAI cross-link

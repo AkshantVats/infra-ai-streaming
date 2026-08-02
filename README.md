@@ -183,6 +183,36 @@ infra-ai-streaming/
 
 ---
 
+## TraceForge platform (unified stack)
+
+TraceForge is four components living in this monorepo, each with its own
+Go module and its own `traceforge` CLI or service binary:
+
+| Component | What it is | Interface |
+|---|---|---|
+| `traceforge/` | Span ingest HTTP service — PII scrub, sampling, OTLP export | `:8080` HTTP service |
+| `agent-replay-engine/` | Deterministic replay/diff of recorded agent runs | `traceforge replay`, `traceforge diff` CLI |
+| `agent-benchmark-runner/` | Task-YAML benchmark runner, N repetitions, two-agent comparison | `traceforge run` CLI |
+| `tool-call-analyzer/` | Tool-call dependency graph + LensAI cost dual-write | `traceforge graph`, `traceforge dual-write` CLI |
+
+Buyers install a compose file, not four `git clone`s. `docker-compose.yml`
+at the repo root brings up all four together, plus the shared Redpanda /
+ClickHouse / OTel Collector infra each one depends on:
+
+```bash
+# Core stack: broker + ClickHouse + OTel Collector + the ingest service
+docker compose up -d
+
+# One-shot CLI tools run under the "tools" profile
+docker compose --profile tools run --rm replay replay --log <path> --trace-id <id>
+docker compose --profile tools run --rm benchmark run --task <path> --agent-a-cmd '<cmd>'
+docker compose --profile tools run --rm analyzer graph --log <path> --trace-id <id>
+
+docker compose down -v
+```
+
+---
+
 ## Platform
 
 This repo is one piece of a three-component AI inference observability platform built open-source:
