@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: MIT
+# Unified TraceForge platform stack — one command boots all four
+# components (traceforge collector, agent-replay-engine, agent-benchmark-runner,
+# tool-call-analyzer) plus their shared infra, instead of cloning and wiring
+# four repos by hand. See docs/daily-plans/day-56-CODE.md.
+#
+# Usage:
+#   docker compose up -d                                  # core stack: broker + clickhouse + collector pipeline
+#   docker compose --profile tools run --rm replay replay --log <path> --trace-id <id>
+#   docker compose --profile tools run --rm benchmark run --task <path> --agent-a-cmd '<cmd>'
+#   docker compose --profile tools run --rm analyzer graph --log <path> --trace-id <id>
+#   docker compose down -v
+
+name: traceforge
+
+services:
+
+  # ── Kafka (Redpanda, Kafka-compatible API) ────────────────────────────────
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    command:
+      - redpanda start
+      - --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:9092
+      - --advertise-kafka-addr internal://redpanda:29092,external://127.0.0.1:9092
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 256M
+      - --reserve-memory 0M
+      - --overprovisioned
+      - --check=false
+      - --mode dev-container
+      - --default-log-level=warn
+      - --set redpanda.auto_create_topics_enabled=true
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  # ── ClickHouse (TraceForge span + benchmark-run storage) ──────────────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: traceforge
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./traceforge/clickhouse/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./traceforge/clickhouse/trace_cost_rollup.sql:/docker-entrypoint-initdb.d/02-rollup.sql:ro
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── OTel Collector (TraceForge span pipeline: OTLP in, ClickHouse+Kafka out) ─
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.103.0
+    command:
+      - "--config=/etc/otelcol-contrib/lensai.yaml"
+      - "--config=/etc/otelcol-contrib/traceforge.yaml"
+    volumes:
+      - ./deploy/otel-collector/config.yaml:/etc/otelcol-contrib/lensai.yaml:ro
+      - ./deploy/otel/traceforge-config.yaml:/etc/otelcol-contrib/traceforge.yaml:ro
+    environment:
+      KAFKA_BROKERS: "redpanda:29092"
+      LENSAI_INGEST_ENDPOINT: "${LENSAI_INGEST_ENDPOINT:-http://collector:8080}"
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── traceforge: ingest HTTP service (component 1 of 4) ────────────────────
+  collector:
+    build:
+      context: .
+      dockerfile: traceforge/Dockerfile
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+      LISTEN_ADDR: ":8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+
+  # ── agent-replay-engine: replay/diff CLI (component 2 of 4) ───────────────
+  # One-shot tool, not a long-running service — invoke with
+  # `docker compose --profile tools run --rm replay <args>`.
+  replay:
+    build:
+      context: .
+      dockerfile: agent-replay-engine/Dockerfile
+    profiles: ["tools"]
+
+  # ── agent-benchmark-runner: task-YAML benchmark CLI (component 3 of 4) ────
+  benchmark:
+    build:
+      context: .
+      dockerfile: agent-benchmark-runner/Dockerfile
+    profiles: ["tools"]
+    depends_on:
+      collector:
+        condition: service_started
+
+  # ── tool-call-analyzer: tool-graph + LensAI dual-write CLI (component 4 of 4) ─
+  analyzer:
+    build:
+      context: .
+      dockerfile: tool-call-analyzer/Dockerfile
+    profiles: ["tools"]
+    environment:
+      KAFKA_BROKERS: "redpanda:29092"
+      CLICKHOUSE_DSN: "clickhouse:9000"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
+volumes:
+  clickhouse-data:

@@ -37,10 +37,10 @@ const (
 // Criterion is one gradeable assertion about a run's outcome. Which
 // fields are populated depends on Type — see the CriterionType constants.
 type Criterion struct {
-	Type   CriterionType `yaml:"type"`
-	Value  string        `yaml:"value,omitempty"`
-	Values []string      `yaml:"values,omitempty"`
-	Max    int           `yaml:"max,omitempty"`
+	Type   CriterionType `yaml:"type" json:"type"`
+	Value  string        `yaml:"value,omitempty" json:"value,omitempty"`
+	Values []string      `yaml:"values,omitempty" json:"values,omitempty"`
+	Max    int           `yaml:"max,omitempty" json:"max,omitempty"`
 }
 
 // Task is one benchmark scenario: a prompt, a fixed seed, the tools the
@@ -51,12 +51,12 @@ type Criterion struct {
 // the scenario — see DESIGN.md's "Why the seed is part of the task, not
 // the run".
 type Task struct {
-	TaskID          string      `yaml:"task_id"`
-	Seed            int64       `yaml:"seed"`
-	Prompt          string      `yaml:"prompt"`
-	TimeoutSeconds  int         `yaml:"timeout_seconds"`
-	ToolsAllowed    []string    `yaml:"tools_allowed"`
-	SuccessCriteria []Criterion `yaml:"success_criteria"`
+	TaskID          string      `yaml:"task_id" json:"task_id"`
+	Seed            int64       `yaml:"seed" json:"seed"`
+	Prompt          string      `yaml:"prompt" json:"prompt"`
+	TimeoutSeconds  int         `yaml:"timeout_seconds" json:"timeout_seconds"`
+	ToolsAllowed    []string    `yaml:"tools_allowed" json:"tools_allowed"`
+	SuccessCriteria []Criterion `yaml:"success_criteria" json:"success_criteria"`
 }
 
 // LoadYAML decodes a Task from r and validates it.

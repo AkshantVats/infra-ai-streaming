@@ -22,6 +22,30 @@ Run the ClickHouse-touching tests (skipped by default) against a local instance:
 CLICKHOUSE_DSN="clickhouse://localhost:9000" go test -tags=integration ./pkg/store/...
 ```
 
+## CLI
+
+`cmd/traceforge`'s `run` subcommand wires every package above into one command: it loads
+a task YAML, runs it against one or two agents N times each via `pkg/subprocess` (the
+agent under test is any executable that reads a `{task, seed}` JSON payload on stdin and
+writes a `criteria.RunOutcome` JSON payload on stdout — see
+[`pkg/subprocess`](pkg/subprocess/subprocess.go)'s doc comment), prints a pass-rate
+summary per agent, and — with two agents — writes a markdown + JSON divergence report.
+
+```bash
+go run ./cmd/traceforge run \
+  --task testdata/checkout-happy-path.yaml \
+  --agent-a-name gpt --agent-a-cmd 'python3 my_agent.py' \
+  --agent-b-name claude --agent-b-cmd 'python3 other_agent.py' \
+  --repetitions 30 --max-parallel 4 \
+  --out ./reports
+```
+
+`--lensai-url` + `--tenant-id` dual-write the batch's completion onto LensAI's `/ingest`
+pipeline the same way `pkg/lensai.Insert` does directly (see "LensAI Ingest" below). This
+CLI is what `docker compose --profile tools run --rm benchmark run ...` runs in the
+[unified TraceForge stack](../README.md#traceforge-platform-unified-stack) — see the root
+`docker-compose.yml` and [`Dockerfile`](Dockerfile).
+
 ## Architecture
 
 ```mermaid
@@ -74,6 +98,7 @@ two-agent divergence is computed and reported separately from pass/fail.
 | `pkg/store` | Persists an orchestrator batch to ClickHouse's `benchmark_runs` table, one row per repetition |
 | `pkg/report` | Renders a `compare.Result` as markdown, JSON, an SVG timeline showing where two agents' tool calls diverged, or a cost-colored SVG flame graph showing where the budget went |
 | `pkg/lensai` | Dual-writes a benchmark batch's completion onto LensAI's `/ingest` pipeline for unified tenant cost |
+| `pkg/subprocess` | Implements `orchestrator.AgentFunc` by invoking the agent under test as an external command over a stdin/stdout JSON contract |
 
 ## Running N Times
 

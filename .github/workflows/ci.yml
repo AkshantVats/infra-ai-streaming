@@ -78,6 +78,27 @@ jobs:
       - name: Go test (agent-benchmark-runner)
         run: cd agent-benchmark-runner && go test -race ./...
 
+  # ── docker-compose config validation ─────────────────────────────────────
+  # Root docker-compose.yml unifies traceforge, agent-replay-engine,
+  # agent-benchmark-runner, and tool-call-analyzer into one stack (Day 56).
+  # This validates the compose file parses and its `build.dockerfile`
+  # references exist; it does not build images (no image pulls/builds in
+  # CI here), so an image-level break in one of the four Dockerfiles would
+  # not be caught by this step alone.
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: docker compose config
+        run: docker compose -f docker-compose.yml config >/dev/null
+
+      - name: Verify referenced Dockerfiles exist
+        run: |
+          for f in traceforge/Dockerfile agent-replay-engine/Dockerfile agent-benchmark-runner/Dockerfile tool-call-analyzer/Dockerfile; do
+            test -f "$f" || { echo "missing $f"; exit 1; }
+          done
+
   helm:
     runs-on: ubuntu-latest
     steps:

@@ -14,10 +14,12 @@ import (
 )
 
 // RunOutcome is the observable result of one agent run against a task:
-// what it said, and what tools it called along the way.
+// what it said, and what tools it called along the way. JSON tags make
+// this the wire format pkg/subprocess decodes from an agent-under-test's
+// stdout.
 type RunOutcome struct {
-	FinalOutput      string
-	ToolCallSequence []string
+	FinalOutput      string   `json:"final_output"`
+	ToolCallSequence []string `json:"tool_call_sequence"`
 }
 
 // Result is the graded outcome of one Criterion against one RunOutcome.
