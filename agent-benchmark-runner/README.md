@@ -29,7 +29,11 @@ a task YAML, runs it against one or two agents N times each via `pkg/subprocess`
 agent under test is any executable that reads a `{task, seed}` JSON payload on stdin and
 writes a `criteria.RunOutcome` JSON payload on stdout — see
 [`pkg/subprocess`](pkg/subprocess/subprocess.go)'s doc comment), prints a pass-rate
-summary per agent, and — with two agents — writes a markdown + JSON divergence report.
+summary per agent, and — with two agents — writes a markdown + JSON + HTML divergence
+report (`<task-id>-report.md`, `<task-id>-report.json`, `<task-id>-landing.html`).
+The HTML landing page is a self-contained, screenshot-ready page: headline, per-agent
+pass/fail table, and the same timeline SVG as the markdown report's companion diagram,
+inlined into one file so it's a single URL to share, not three files to stitch together.
 
 ```bash
 go run ./cmd/traceforge run \
@@ -41,7 +45,9 @@ go run ./cmd/traceforge run \
 ```
 
 `--lensai-url` + `--tenant-id` dual-write the batch's completion onto LensAI's `/ingest`
-pipeline the same way `pkg/lensai.Insert` does directly (see "LensAI Ingest" below). This
+pipeline the same way `pkg/lensai.Insert` does directly (see "LensAI Ingest" below).
+`--lensai-dashboard` (also requires `--tenant-id`) adds a "View this batch in LensAI"
+cross-link to the landing page, pointing at that dashboard's per-tenant trace view. This
 CLI is what `docker compose --profile tools run --rm benchmark run ...` runs in the
 [unified TraceForge stack](../README.md#traceforge-platform-unified-stack) — see the root
 `docker-compose.yml` and [`Dockerfile`](Dockerfile).

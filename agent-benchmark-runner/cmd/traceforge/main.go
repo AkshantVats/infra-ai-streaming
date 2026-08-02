@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/akshantvats/agent-benchmark-runner/pkg/compare"
@@ -52,6 +53,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	outDir := fs.String("out", ".", "directory the comparison report is written to")
 	lensaiURL := fs.String("lensai-url", "", "LensAI ingest URL for an optional batch-completion dual-write")
 	tenantID := fs.String("tenant-id", "", "tenant id (required when --lensai-url is set)")
+	lensaiDashboard := fs.String("lensai-dashboard", "", "LensAI dashboard base URL, cross-linked from the landing page (optional, requires --tenant-id)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -67,6 +69,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if *lensaiURL != "" && *tenantID == "" {
 		fmt.Fprintln(stderr, "run: --tenant-id is required when --lensai-url is set")
+		return 2
+	}
+	if *lensaiDashboard != "" && *tenantID == "" {
+		fmt.Fprintln(stderr, "run: --tenant-id is required when --lensai-dashboard is set")
 		return 2
 	}
 
@@ -110,7 +116,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 				rep := report.Build(cmpResult, outcomeA.ToolCallSequence, outcomeB.ToolCallSequence)
 				fmt.Fprintf(stdout, "compare: %s\n", rep.Headline)
 
-				if err := writeReport(*outDir, t.TaskID, rep); err != nil {
+				lensaiLink := ""
+				if *lensaiDashboard != "" {
+					lensaiLink = fmt.Sprintf("%s/tenants/%s/traces/%s", strings.TrimRight(*lensaiDashboard, "/"), *tenantID, t.TaskID)
+				}
+				if err := writeReport(*outDir, t.TaskID, rep, lensaiLink); err != nil {
 					fmt.Fprintf(stderr, "run: write report: %v\n", err)
 					return 1
 				}
@@ -155,7 +165,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --max-parallel <n>         max concurrent repetitions (default 4)")
 	fmt.Fprintln(w, "  --out <dir>                comparison report directory (default \".\")")
 	fmt.Fprintln(w, "  --lensai-url <url>         optional LensAI ingest URL for a batch-completion dual-write")
-	fmt.Fprintln(w, "  --tenant-id <id>           required with --lensai-url")
+	fmt.Fprintln(w, "  --tenant-id <id>           required with --lensai-url or --lensai-dashboard")
+	fmt.Fprintln(w, "  --lensai-dashboard <url>   optional LensAI dashboard base URL, cross-linked from the landing page")
 }
 
 func printSummary(w io.Writer, agentName string, s orchestrator.Summary) {
@@ -176,7 +187,7 @@ func firstOutcome(results []orchestrator.RunResult) (criteria.RunOutcome, bool) 
 	return criteria.RunOutcome{}, false
 }
 
-func writeReport(dir, taskID string, rep report.Report) error {
+func writeReport(dir, taskID string, rep report.Report, lensaiLink string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("write report: %w", err)
 	}
@@ -196,6 +207,15 @@ func writeReport(dir, taskID string, rep report.Report) error {
 	}
 	defer jsonFile.Close()
 	if err := report.RenderJSON(jsonFile, rep); err != nil {
+		return fmt.Errorf("write report: %w", err)
+	}
+
+	htmlFile, err := os.Create(filepath.Join(dir, taskID+"-landing.html"))
+	if err != nil {
+		return fmt.Errorf("write report: %w", err)
+	}
+	defer htmlFile.Close()
+	if err := report.RenderLandingHTML(htmlFile, rep, lensaiLink); err != nil {
 		return fmt.Errorf("write report: %w", err)
 	}
 	return nil
