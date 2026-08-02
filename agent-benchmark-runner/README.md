@@ -72,6 +72,7 @@ two-agent divergence is computed and reported separately from pass/fail.
 | `pkg/compare` | Grades two agents on the same task and reports their first tool-call divergence |
 | `pkg/orchestrator` | Runs a Task N times against one agent under bounded concurrency; summarizes pass rate (with a 95% CI) and step-count median/P95 |
 | `pkg/store` | Persists an orchestrator batch to ClickHouse's `benchmark_runs` table, one row per repetition |
+| `pkg/report` | Renders a `compare.Result` as markdown, JSON, or an SVG timeline showing where two agents' tool calls diverged |
 
 ## Running N Times
 
@@ -94,6 +95,23 @@ summary := orchestrator.Summarize(results)
 writer, err := store.NewClickHouseWriter(ctx, dsn)
 records := store.NewRunRecords(t.TaskID, cfg.AgentName, results, time.Now().UTC())
 err = writer.WriteRuns(ctx, records)
+```
+
+## Generating a Report
+
+`pkg/report` turns a `compare.Result` into the report a reviewer actually reads — see
+[DESIGN.md](DESIGN.md#generating-a-report-day-53) for why the headline leads with the
+call-count/divergence comparison instead of a pass/fail badge, and why the timeline is a
+hand-rolled SVG instead of a charting dependency.
+
+```go
+result := compare.Compare(t, runA, runB)
+rpt := report.Build(result, runA.Outcome.ToolCallSequence, runB.Outcome.ToolCallSequence)
+// rpt.Headline == "14 calls vs 9, diverged at step 5"
+
+report.RenderMarkdown(os.Stdout, rpt)     // PR description / Slack message
+report.RenderJSON(jsonFile, rpt)          // dashboards / alerting rules
+report.RenderTimelineSVG(svgFile, rpt)    // side-by-side visual of where the runs split
 ```
 
 ## Sample task
