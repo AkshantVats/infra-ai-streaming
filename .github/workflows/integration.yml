@@ -57,7 +57,7 @@ jobs:
           --health-start-period 5s
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Redpanda requires --mode dev-container and custom kafka-addr flags that
       # GitHub Actions service containers cannot pass. Start it as a docker run step.
