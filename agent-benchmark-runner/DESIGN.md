@@ -297,6 +297,53 @@ the visual already encodes.
 call sequences it also doesn't have another source for. A future runner that instruments
 real per-tool-call dollar cost supplies it here; today's tests supply fixture costs.
 
+## LensAI Integration — Benchmark Completion Emits Ingest Events (Day 55)
+
+Day 42 (`tool-call-analyzer/pkg/lensai`) already dual-writes tool-call cost onto LensAI's
+`/ingest` pipeline, using LensAI's own `InferenceEvent`-shaped envelope with an additive
+`source: "tool_call"` field. Day 55 repeats that exact pattern for
+`agent-benchmark-runner`: `pkg/lensai.Writer.Insert` posts one `Event` per completed
+`orchestrator.Run` batch, discriminated with `source: "benchmark_run"`, so a benchmark
+outcome and an inference cost event for the same tenant land in the same query face.
+
+### One Event per Batch, Not per Repetition
+
+`pkg/store`'s `benchmark_runs` table already stores one row per `orchestrator.RunResult`
+for full statistical fidelity — Day 52's rationale was that a pre-aggregated row can't be
+recomputed without re-running the batch. The LensAI-facing question is coarser: "how is
+this agent doing, next to its inference spend, on one shared dashboard." Ingest volume
+should scale with how many benchmark batches ran, not how many repetitions each batch had.
+A per-repetition event would also lose the batch's Wilson confidence interval entirely,
+since no single repetition carries one — only `orchestrator.Summary` does.
+
+### `CostUSD` Stays Zero
+
+`orchestrator.RunResult` and `criteria.RunOutcome` carry no cost data. The only cost data
+in this module — `pkg/report.CostReport` (Day 54) — is scoped to two-agent `pkg/compare`
+output, not the single-agent `orchestrator.Run` path this event is built from. Inventing a
+cost estimate here would double-count: if the agent under test makes tool calls, those
+calls' actual dollar cost is already dual-written by `tool-call-analyzer/pkg/lensai` at
+the point the calls happen. A benchmark-run event claiming its own nonzero cost would sit
+on the same tenant's bill as a second, unrelated number for work already billed elsewhere.
+
+### `ModelID` Carries `AgentName`, `TraceID` Carries `TaskID`
+
+LensAI's dashboards join and group primarily on `model_id`; on the shared ingest face,
+"which agent configuration was under test" is the dimension a viewer actually wants to
+slice by — the same reasoning Day 42 used to fall back `ModelID` to the tool's name when no
+model name was available. `TraceID` correlates every batch run against the same `Task`,
+including, later, both sides of an A/B `pkg/compare` run if a future day chooses to emit
+one event per agent side instead of a single combined one.
+
+### The Honest Gap
+
+The envelope stays safe to extend only because LensAI's `InferenceEvent` doesn't use
+`#[serde(deny_unknown_fields)]` today — additive fields like `TraceID` and `Source` are
+silently dropped by callers that don't recognize them yet, not rejected. That's a property
+of the current Rust struct, not a contract either dual-writer enforces. The day LensAI's
+ingest handler adds strict field validation, both `tool_call` and `benchmark_run`
+dual-writers break at once, silently, until someone notices a metric went to zero.
+
 ## File Layout
 
 ```
@@ -334,6 +381,9 @@ pkg/
     timeline_test.go               (NEW — Day 53: 6 tests)
     flame.go                       (NEW — Day 54: CostReport, BuildCostReport, RenderFlameGraphSVG)
     flame_test.go                  (NEW — Day 54: 10 tests)
+  lensai/
+    writer.go                      (NEW — Day 55: Event, BatchParams, Writer, Insert, ToEvent, batchStatus)
+    writer_test.go                 (NEW — Day 55: 10 tests)
 ```
 
 ## Acceptance Criteria
@@ -346,5 +396,5 @@ go test -race ./...  # exits 0
 
 ## Series Navigation
 
-Previous: Day 53 — agent-benchmark-runner: Report Generator — Markdown, JSON, SVG Timeline
-Next: Day 55 — agent-benchmark-runner: LensAI Integration — Benchmark Completion Emits Ingest Events
+Previous: Day 54 — agent-benchmark-runner: Flame Graph Timeline — Colored by Cost
+Next: Day 56 — traceforge-dev: unified docker-compose across all four repos

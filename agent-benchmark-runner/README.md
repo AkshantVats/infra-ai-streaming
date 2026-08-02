@@ -73,6 +73,7 @@ two-agent divergence is computed and reported separately from pass/fail.
 | `pkg/orchestrator` | Runs a Task N times against one agent under bounded concurrency; summarizes pass rate (with a 95% CI) and step-count median/P95 |
 | `pkg/store` | Persists an orchestrator batch to ClickHouse's `benchmark_runs` table, one row per repetition |
 | `pkg/report` | Renders a `compare.Result` as markdown, JSON, an SVG timeline showing where two agents' tool calls diverged, or a cost-colored SVG flame graph showing where the budget went |
+| `pkg/lensai` | Dual-writes a benchmark batch's completion onto LensAI's `/ingest` pipeline for unified tenant cost |
 
 ## Running N Times
 
@@ -130,6 +131,29 @@ costsB := []float64{0.004, 0.019}
 
 costRpt, err := report.BuildCostReport(rpt, costsA, costsB)
 report.RenderFlameGraphSVG(svgFile, costRpt)    // widest, hottest box == where the budget died
+```
+
+## LensAI Ingest
+
+A benchmark batch's completion — not each repetition — is dual-written onto LensAI's
+shared `/ingest` pipeline, using the same envelope `tool-call-analyzer/pkg/lensai` already
+uses for tool-call cost, discriminated by `source: "benchmark_run"`. See
+[DESIGN.md](DESIGN.md#lensai-integration--benchmark-completion-emits-ingest-events-day-55)
+for why `CostUSD` stays zero, why one event per batch instead of per repetition, and the
+honest gap in how long the shared envelope stays safe to extend.
+
+```go
+summary := orchestrator.Summarize(results)
+
+writer := lensai.New(os.Getenv("LENSAI_INGEST_URL"))
+err := writer.Insert(ctx, summary, lensai.BatchParams{
+    TaskID:      t.TaskID,
+    AgentName:   cfg.AgentName,
+    TenantID:    "acme",
+    BatchID:     batchID,
+    Duration:    time.Since(batchStart),
+    CompletedAt: time.Now(),
+})
 ```
 
 ## Sample task
