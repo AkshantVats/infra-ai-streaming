@@ -394,6 +394,49 @@ repetition: a subprocess that wants to keep model or tool state warm across repe
 per `AgentFunc` invocation, because nothing in this contract distinguishes "first
 repetition" from "repetition 30."
 
+## Landing Page — One Screenshot, Not Three Files (Day 57)
+
+Day 53's `pkg/report` gave a divergence report three faces — `Report`, `RenderMarkdown`,
+`RenderJSON` — plus Day 53/54's `RenderTimelineSVG`/`RenderCostFlameSVG` as standalone
+artifacts. That's the right shape for a PR body or a Slack summary, but it's the wrong
+shape for a launch post: "here's the benchmark result" needs one URL to screenshot, not a
+markdown file plus a separately-generated `.svg` a reader has to know to open together.
+
+`report.RenderLandingHTML` closes that gap: it wraps the same `Report` data — headline,
+per-agent pass/fail table — around an inlined `RenderTimelineSVG` call, as one
+self-contained HTML file with no external CSS or JS. `cmd/traceforge` writes it alongside
+the markdown and JSON reports as `<task-id>-landing.html` whenever a two-agent run
+produces a comparison.
+
+### Why Inline the SVG Instead of Linking It
+
+`RenderTimelineSVG` already writes a standalone `.svg` file for the markdown report to
+reference. The landing page inlines the same call's output directly into the HTML instead
+of `<img src="...svg">`-referencing that file, because a screenshot tool (or a reader
+saving the page for later) only reliably captures what's actually in the document — a
+linked SVG that fails to resolve (wrong relative path, page opened from a different
+directory than it was written to) silently degrades to a blank box instead of a broken
+report.
+
+### The LensAI Cross-Link Is Opt-In, Not Inferred
+
+`RenderLandingHTML` takes `lensaiLink` as an explicit parameter rather than deriving one
+from `--lensai-url` — `--lensai-url` is an ingest endpoint (write-only, not something a
+human should click), while a landing page link needs a dashboard URL a browser can
+actually render. `cmd/traceforge` only builds that link when the operator separately
+passes `--lensai-dashboard` (with `--tenant-id`, the same requirement `--lensai-url`
+already has); a run without it gets a landing page with no LensAI section at all, rather
+than a link that predictably 404s.
+
+### The Honest Gap
+
+"Screenshot-ready" here means "renders correctly in a browser and looks intentional," not
+"an actual PNG gets produced." Nothing in this repo drives a headless browser to capture
+one — the existing SVG-over-charting-library design decision (Day 53) already ruled out
+adding a rendering dependency for report artifacts, and a launch screenshot is a one-time,
+human-in-the-loop action anyway. The HTML page is the shareable artifact; turning it into
+a raster image is a manual step, not an automated one.
+
 ## File Layout
 
 ```
@@ -431,6 +474,8 @@ pkg/
     timeline_test.go               (NEW — Day 53: 6 tests)
     flame.go                       (NEW — Day 54: CostReport, BuildCostReport, RenderFlameGraphSVG)
     flame_test.go                  (NEW — Day 54: 10 tests)
+    landing.go                     (NEW — Day 57: RenderLandingHTML, landingCSS)
+    landing_test.go                (NEW — Day 57: 4 tests)
   lensai/
     writer.go                      (NEW — Day 55: Event, BatchParams, Writer, Insert, ToEvent, batchStatus)
     writer_test.go                 (NEW — Day 55: 10 tests)
@@ -439,7 +484,7 @@ pkg/
     subprocess_test.go             (NEW — Day 56: 5 tests)
 cmd/
   traceforge/
-    main.go                        (NEW — Day 56: "run" subcommand — load task, run 1-2 agents N times, summarize, compare, report)
+    main.go                        (NEW — Day 56, MODIFIED — Day 57: "run" subcommand; adds --lensai-dashboard, writes landing.html)
     main_test.go                   (NEW — Day 56: 4 tests)
 Dockerfile                          (NEW — Day 56: multi-stage build of the traceforge CLI binary)
 ```
@@ -454,5 +499,5 @@ go test -race ./...  # exits 0
 
 ## Series Navigation
 
-Previous: Day 55 — LensAI Integration — Benchmark Completion Emits Ingest Events
-Next: Day 57 — Landing page draft + benchmark screenshot + LensAI cross-link
+Previous: Day 56 — The First CLI, and the Subprocess Contract
+Next: Day 58 — Launch rehearsal + integration test
