@@ -194,6 +194,50 @@ Day 51. A CLI that reads a task YAML, drives N repetitions against a real agent 
 and writes the results to ClickHouse end-to-end is a natural Day 53+ candidate, not part
 of Day 52.
 
+## Generating a Report (Day 53)
+
+Day 51 produces a `compare.Result`; Day 52 produces a `Summary` over N repetitions.
+Neither is something a reviewer reads directly — `compare.Result` is a Go struct, and a
+benchmark result only earns attention if a reader can tell in five words whether
+something is wrong. `pkg/report.Build` reshapes a `compare.Result` plus the two agents'
+raw tool call sequences (deliberately not carried on `compare.Result` itself — see
+"Comparing Two Agents" above) into a `Report`, and three render functions turn that into
+the three shapes three different audiences actually need: `RenderMarkdown` for a PR
+description or a Slack message, `RenderJSON` for a dashboard or an alerting rule, and
+`RenderTimelineSVG` for a side-by-side visual of where two runs' tool calls parted ways.
+
+### Why the Headline Leads With Divergence, Not Pass/Fail
+
+`Report.Headline` reads `"14 calls vs 9, diverged at step 5"` — call counts and the
+divergence point, not `PASS`/`FAIL`. A pass/fail badge only answers "did it pass," which
+Day 51 already reports per agent; it says nothing about *why* two runs differ, and a
+report that opens with two independent pass/fail badges makes a reader hunt through the
+rest of the document to find where the runs actually split. Leading with the call-count
+comparison and the divergence step answers the question a reviewer opens the report to
+ask — "where did these two runs stop agreeing" — before they read a single criterion
+result.
+
+### Why a Hand-Rolled SVG, Not a Charting Dependency
+
+`RenderTimelineSVG` writes raw `<svg>`/`<rect>`/`<text>` elements with `fmt.Fprintf`
+instead of pulling in a charting or graphing library. The visual is two rows of fixed-size
+boxes — one per tool call, colored by whether that step matched, diverged, or came after
+the divergence point — which a few dozen lines of string formatting renders exactly as
+well as a general-purpose charting library would, without adding a dependency (and its
+own transitive tree) for a fixed, narrow shape of chart. A tool call sequence that ends
+before the other's is drawn as a dashed empty slot at that step rather than simply
+omitted, so a shorter run visually reads as "stopped here" instead of leaving an
+unexplained gap in the timeline.
+
+### Scope for Day 53
+
+`pkg/report` renders a single `compare.Result`, not a `Summary` batch — a Day 52
+orchestrator run producing N repetitions and picking a representative pair (or an
+aggregate divergence view across all N) to hand to `report.Build` is a natural next step,
+not part of Day 53. There is still no CLI wiring a task YAML, a live agent process, and
+a rendered report together end-to-end — each of `pkg/task`, `pkg/orchestrator`, and now
+`pkg/report` remains a library a future runner composes, not a runnable binary itself.
+
 ## File Layout
 
 ```
@@ -224,6 +268,11 @@ pkg/
     schema/
       001_benchmark_runs.sql       (NEW — Day 52: benchmark_runs DDL)
       002_apply.sh                 (NEW — Day 52: applies schema files in order)
+  report/
+    report.go                      (NEW — Day 53: Report, Build, headline, RenderMarkdown, RenderJSON)
+    report_test.go                 (NEW — Day 53: 7 tests)
+    timeline.go                    (NEW — Day 53: RenderTimelineSVG, truncateLabel)
+    timeline_test.go               (NEW — Day 53: 6 tests)
 ```
 
 ## Acceptance Criteria
@@ -236,5 +285,5 @@ go test -race ./...  # exits 0
 
 ## Series Navigation
 
-Previous: Day 51 — agent-benchmark-runner: DESIGN.md — Task YAML, Compare Two Agents, Success Criteria
-Next: Day 53 — TBD
+Previous: Day 52 — agent-benchmark-runner: Orchestrator — Parallel Runs, ClickHouse `benchmark_runs`, Seed Control
+Next: Day 54 — TBD
