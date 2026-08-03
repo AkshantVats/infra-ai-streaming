@@ -24,7 +24,22 @@ pub struct InferenceEvent {
     pub status: Option<String>,
     pub error_code: Option<String>,
     pub request_id: Option<String>,
+    /// Correlates this event to a trace outside LensAI's own span model (e.g. a
+    /// TraceForge benchmark repetition ID). Additive: absent on native LensAI events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+    /// Discriminates the event's producer on the shared ingest pipeline: native
+    /// LensAI inference events leave this unset (normalized to "inference"),
+    /// while dual-writers like agent-benchmark-runner's pkg/lensai set it to
+    /// "benchmark_run" so a single ClickHouse table (and Grafana dashboard) can
+    /// filter cost/latency events apart from benchmark-batch-completion events
+    /// without a second table or query.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
+
+/// Default `source` value normalize_events assigns when a producer omits it.
+pub const SOURCE_INFERENCE: &str = "inference";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestRequest {

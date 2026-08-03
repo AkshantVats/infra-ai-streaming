@@ -16,6 +16,8 @@ type InferenceEvent struct {
 	Status           *string `json:"status,omitempty"`
 	ErrorCode        *string `json:"error_code,omitempty"`
 	RequestID        *string `json:"request_id,omitempty"`
+	TraceID          *string `json:"trace_id,omitempty"`
+	Source           *string `json:"source,omitempty"`
 }
 
 // IngestBatch is the Kafka record envelope produced by Rust ingestion.
