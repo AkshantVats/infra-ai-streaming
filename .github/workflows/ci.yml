@@ -78,6 +78,17 @@ jobs:
       - name: Go test (agent-benchmark-runner)
         run: cd agent-benchmark-runner && go test -race ./...
 
+      - name: gofmt (check, semantic-cache-engine)
+        run: |
+          cd semantic-cache-engine
+          test -z "$(gofmt -l .)"
+
+      - name: Go vet (semantic-cache-engine)
+        run: cd semantic-cache-engine && go vet ./...
+
+      - name: Go test (semantic-cache-engine)
+        run: cd semantic-cache-engine && go test -race ./...
+
   # ── docker-compose config validation ─────────────────────────────────────
   # Root docker-compose.yml unifies traceforge, agent-replay-engine,
   # agent-benchmark-runner, and tool-call-analyzer into one stack (Day 56).
