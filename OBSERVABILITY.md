@@ -159,8 +159,13 @@ Two provisioned dashboards (see `dashboards/` for canonical JSON; mirrored under
 |-----------|-----|-----|----------|
 | **AI Inference Observability — Local E2E** | `ai-inference-e2e-local` | http://localhost:3000/d/ai-inference-e2e-local | Proving pipeline health (scrape UP, breaker, overflow, DLQ, WAL) |
 | **AI Inference — Product SLOs** | `ai-inference-product` | http://localhost:3000/d/ai-inference-product | Tenant throughput, inference P99 by model, cost/hour, consumer lag |
+| **TraceForge × LensAI — Cross-Product Proof** | `traceforge-lensai-cross-product` | http://localhost:3000/d/traceforge-lensai-cross-product | Confirming `agent-benchmark-runner`'s dual-write lands in the same `inference_events` table as native LensAI events, discriminated by `source` |
 
 Credentials: `admin` / `admin` (from `deploy/.env`).
+
+### `source` / `trace_id` columns
+
+`infra_ai.inference_events` carries two additive columns beyond the original schema: `source LowCardinality(String) DEFAULT 'inference'` and `trace_id Nullable(String)`. Native LensAI events normalize to `source='inference'` (see `ingestion/src/handlers/validate.rs::normalize_events`); `agent-benchmark-runner`'s dual-write (`agent-benchmark-runner/pkg/lensai`) sets `source='benchmark_run'` and `trace_id` to the batch's task ID, so one table answers both "what did this tenant's inference cost" and "what did benchmarking this tenant's agents cost" without a second warehouse or a cross-service join.
 
 ### Product SLO panels
 

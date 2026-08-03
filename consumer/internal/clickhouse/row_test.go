@@ -192,6 +192,50 @@ func TestRowsFromEventsConvertsAll(t *testing.T) {
 	}
 }
 
+// TestRowFromEventSourceDefaultsToInference verifies that a nil Source
+// pointer causes the row to carry "inference", matching the ingestion
+// side's normalize_events default for native LensAI events.
+func TestRowFromEventSourceDefaultsToInference(t *testing.T) {
+	row, err := RowFromEvent(model.InferenceEvent{
+		TenantID:        "t1",
+		ModelID:         "m1",
+		TimestampUnixMs: 1715000000000,
+		LatencyMs:       50,
+		// Source intentionally nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Source != "inference" {
+		t.Fatalf("source = %q, want inference", row.Source)
+	}
+}
+
+// TestRowFromEventPreservesExplicitSourceAndTraceID verifies that a
+// dual-writer-supplied source (e.g. "benchmark_run") and trace_id survive
+// the mapping unchanged, so a Grafana panel can filter on them.
+func TestRowFromEventPreservesExplicitSourceAndTraceID(t *testing.T) {
+	source := "benchmark_run"
+	traceID := "batch-001"
+	row, err := RowFromEvent(model.InferenceEvent{
+		TenantID:        "t1",
+		ModelID:         "m1",
+		TimestampUnixMs: 1715000000000,
+		LatencyMs:       50,
+		Source:          &source,
+		TraceID:         &traceID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Source != "benchmark_run" {
+		t.Fatalf("source = %q, want benchmark_run", row.Source)
+	}
+	if row.TraceID == nil || *row.TraceID != traceID {
+		t.Fatalf("trace_id = %v, want %q", row.TraceID, traceID)
+	}
+}
+
 // TestRowsFromEventsShortCircuitsOnError verifies that the first invalid event
 // causes an early-return error and no partial slice.
 func TestRowsFromEventsShortCircuitsOnError(t *testing.T) {

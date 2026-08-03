@@ -18,7 +18,9 @@ CREATE TABLE infra_ai.inference_events
     cost_usd Float64,
     status LowCardinality(String),
     error_code Nullable(String),
-    request_id Nullable(String)
+    request_id Nullable(String),
+    trace_id Nullable(String),
+    source LowCardinality(String) DEFAULT 'inference'
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(timestamp)

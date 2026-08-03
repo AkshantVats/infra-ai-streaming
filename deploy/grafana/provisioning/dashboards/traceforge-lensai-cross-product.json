@@ -1,0 +1,142 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "AI Inference — Product SLOs",
+      "type": "link",
+      "url": "/d/ai-inference-product"
+    }
+  ],
+  "panels": [
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "description": "Row count in infra_ai.inference_events by source. Proves TraceForge's agent-benchmark-runner dual-write (pkg/lensai, source=benchmark_run) lands in the same table as LensAI's native inference events (source=inference), not a second table.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "format": 0,
+          "queryType": "sql",
+          "rawSql": "SELECT\n  $__timeInterval(timestamp) AS time,\n  source,\n  count() AS events\nFROM infra_ai.inference_events\nWHERE $__timeFilter(timestamp)\nGROUP BY time, source\nORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Events by source — inference vs benchmark_run",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "description": "cost_usd summed per tenant, split by source. benchmark_run rows are always 0 by design (pkg/lensai.ToEvent leaves CostUSD at 0.0 so batch cost isn't double-counted against the per-repetition ClickHouse benchmark_runs table) — this panel proves that, rather than a live cost comparison.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "format": 0,
+          "queryType": "sql",
+          "rawSql": "SELECT\n  toStartOfHour(timestamp) AS time,\n  tenant_id,\n  source,\n  sum(cost_usd) AS cost_usd\nFROM infra_ai.inference_events\nWHERE timestamp >= now() - INTERVAL 24 HOUR\n  AND $__timeFilter(timestamp)\nGROUP BY time, tenant_id, source\nORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Cost per hour by tenant, split by source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "description": "P99 latency_ms by source. benchmark_run's latency_ms is the batch's wall-clock Duration (see pkg/lensai.BatchParams), not a single inference call, so this panel compares distributions rather than claiming they're the same unit.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": {
+        "legend": { "calcs": ["max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "format": 0,
+          "queryType": "sql",
+          "rawSql": "SELECT\n  $__timeInterval(timestamp) AS time,\n  source,\n  quantile(0.99)(latency_ms) AS p99_ms\nFROM infra_ai.inference_events\nWHERE $__timeFilter(timestamp)\nGROUP BY time, source\nORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "P99 latency by source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "description": "Most recent benchmark batches. request_id carries pkg/lensai.BatchParams.BatchID (join key back to this batch) and trace_id carries BatchParams.TaskID (join key to the task YAML) — see pkg/lensai.ToEvent. Cross-reference batch_id against agent-benchmark-runner's own benchmark_runs table (pkg/store) for per-repetition detail this row doesn't carry.",
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT\n  timestamp,\n  tenant_id,\n  request_id AS batch_id,\n  trace_id AS task_id,\n  model_id AS agent_name,\n  status\nFROM infra_ai.inference_events\nWHERE source = 'benchmark_run'\n  AND $__timeFilter(timestamp)\nORDER BY timestamp DESC\nLIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent benchmark batches (source = benchmark_run)",
+      "type": "table"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["infra-ai-streaming", "traceforge", "lensai", "cross-product"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "TraceForge × LensAI — Cross-Product Proof",
+  "uid": "traceforge-lensai-cross-product",
+  "version": 1
+}

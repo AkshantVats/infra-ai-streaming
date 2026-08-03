@@ -20,7 +20,8 @@ import (
 const insertSQL = `INSERT INTO infra_ai.inference_events (
 	event_id, tenant_id, model_id, timestamp, latency_ms,
 	prefill_latency_ms, decode_latency_ms,
-	prompt_tokens, completion_tokens, cost_usd, status, error_code, request_id
+	prompt_tokens, completion_tokens, cost_usd, status, error_code, request_id,
+	trace_id, source
 ) VALUES`
 
 // DLQHandoff sends events to Kafka DLQ after retries are exhausted.
@@ -271,6 +272,8 @@ func (w *BatchWriter) batchInsert(ctx context.Context, events []model.InferenceE
 			r.Status,
 			r.ErrorCode,
 			r.RequestID,
+			r.TraceID,
+			r.Source,
 		); err != nil {
 			return err
 		}

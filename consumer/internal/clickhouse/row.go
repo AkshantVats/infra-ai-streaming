@@ -24,6 +24,8 @@ type Row struct {
 	Status           string
 	ErrorCode        *string
 	RequestID        *string
+	TraceID          *string
+	Source           string
 }
 
 // RowFromEvent maps the Kafka JSON model to init.sql columns.
@@ -44,6 +46,11 @@ func RowFromEvent(e model.InferenceEvent) (Row, error) {
 		status = *e.Status
 	}
 
+	source := "inference"
+	if e.Source != nil && *e.Source != "" {
+		source = *e.Source
+	}
+
 	return Row{
 		EventID:          eventID,
 		TenantID:         e.TenantID,
@@ -58,6 +65,8 @@ func RowFromEvent(e model.InferenceEvent) (Row, error) {
 		Status:           status,
 		ErrorCode:        e.ErrorCode,
 		RequestID:        e.RequestID,
+		TraceID:          e.TraceID,
+		Source:           source,
 	}, nil
 }
 

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::metrics::INGESTION_VALIDATION_ERRORS_TOTAL;
 
-use super::event::InferenceEvent;
+use super::event::{InferenceEvent, SOURCE_INFERENCE};
 
 /// Validation failure returned before durable writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +102,9 @@ pub fn normalize_events(events: &mut [InferenceEvent]) {
         if event.status.is_none() {
             event.status = Some("success".to_string());
         }
+        if event.source.is_none() {
+            event.source = Some(SOURCE_INFERENCE.to_string());
+        }
     }
 }
 
@@ -125,6 +128,8 @@ mod tests {
             status: None,
             error_code: None,
             request_id: None,
+            trace_id: None,
+            source: None,
         }
     }
 
@@ -168,5 +173,16 @@ mod tests {
         normalize_events(&mut events);
         assert!(events[0].event_id.is_some());
         assert_eq!(events[0].status.as_deref(), Some("success"));
+        assert_eq!(events[0].source.as_deref(), Some(SOURCE_INFERENCE));
+    }
+
+    #[test]
+    fn normalize_preserves_explicit_source_and_trace_id() {
+        let mut events = vec![sample_event(1_000_000, 1, 0.0)];
+        events[0].source = Some("benchmark_run".to_string());
+        events[0].trace_id = Some("batch-001".to_string());
+        normalize_events(&mut events);
+        assert_eq!(events[0].source.as_deref(), Some("benchmark_run"));
+        assert_eq!(events[0].trace_id.as_deref(), Some("batch-001"));
     }
 }
