@@ -22,6 +22,14 @@ Run the ClickHouse-touching tests (skipped by default) against a local instance:
 CLICKHOUSE_DSN="clickhouse://localhost:9000" go test -tags=integration ./pkg/store/...
 ```
 
+`go test ./...` also runs `cmd/traceforge`'s launch rehearsal
+(`TestLaunchRehearsal`), an in-process integration test that drives the
+same orchestrator/compare/report path `traceforge run` uses — two stub
+agents at fixed, different pass rates against
+`testdata/checkout-happy-path.yaml` — and asserts the pass-rate summary
+plus all three report artifacts (markdown, JSON, HTML landing page); no
+extra setup or build tag required.
+
 ## CLI
 
 `cmd/traceforge`'s `run` subcommand wires every package above into one command: it loads
