@@ -1,0 +1,13 @@
+{
+  "default": {
+    "similarity_threshold": 0.92
+  },
+  "tenants": {
+    "tenant-demo": {
+      "similarity_threshold": 0.92
+    },
+    "tenant-premium": {
+      "similarity_threshold": 0.97
+    }
+  }
+}
