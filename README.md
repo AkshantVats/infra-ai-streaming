@@ -187,9 +187,9 @@ infra-ai-streaming/
 
 TraceForge is four components living in this monorepo, each with its own
 Go module and its own `traceforge` CLI or service binary. RouteIQ, the arc
-opened on Day 60, adds a fifth row below: `semantic-cache-engine` is
-design-only for now (see [Platform](#platform) for how RouteIQ relates to
-TraceForge and the rest of the stack):
+opened on Day 60, adds two more rows below: `semantic-cache-engine` and
+`cost-budget-enforcer` are both design-only for now (see [Platform](#platform)
+for how RouteIQ relates to TraceForge and the rest of the stack):
 
 | Component | What it is | Interface |
 |---|---|---|
@@ -198,6 +198,7 @@ TraceForge and the rest of the stack):
 | `agent-benchmark-runner/` | Task-YAML benchmark runner, N repetitions, two-agent comparison | `traceforge run` CLI |
 | `tool-call-analyzer/` | Tool-call dependency graph + LensAI cost dual-write | `traceforge graph`, `traceforge dual-write` CLI |
 | `semantic-cache-engine/` | RouteIQ's embedding-similarity response cache, dual-writes `source='cache_hit'` to LensAI | **Design-only** — see [`semantic-cache-engine/DESIGN.md`](semantic-cache-engine/DESIGN.md), no runtime yet |
+| `cost-budget-enforcer/` | RouteIQ's per-tenant sliding-window token budget — soft-limit routes to a cheaper model, hard-limit rejects | **Design-only** — see [`cost-budget-enforcer/DESIGN.md`](cost-budget-enforcer/DESIGN.md), no runtime yet |
 
 Buyers install a compose file, not four `git clone`s. `docker-compose.yml`
 at the repo root brings up all four together, plus the shared Redpanda /
