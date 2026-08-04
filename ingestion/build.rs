@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Embeds git SHA and build time at compile time (override via GIT_SHA / BUILD_TIME in CI).
 
 fn main() {
