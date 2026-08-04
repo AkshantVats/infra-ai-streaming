@@ -110,6 +110,9 @@ jobs:
             test -f "$f" || { echo "missing $f"; exit 1; }
           done
 
+      - name: docker compose config (semantic-cache-engine, Day 64)
+        run: docker compose -f semantic-cache-engine/docker-compose.yml config >/dev/null
+
   helm:
     runs-on: ubuntu-latest
     steps:

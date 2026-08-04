@@ -1,12 +1,15 @@
 # semantic-cache-engine — Benchmarks
 
-**Status:** A single offline threshold sweep, run against a small hand-labeled held-out
-prompt-pair set. This is not a load-test benchmark (no live traffic, no pgvector instance in
-this sandbox) — it validates DESIGN.md §8's shipped `0.92` similarity threshold against
-real, reproducible precision/recall/false-positive numbers instead of a single point estimate,
-using the method described below. **Read the "Why these numbers aren't the production
-signal" section before treating any number here as a claim about `pkg/embedder`'s real
-behavior.**
+**Status:** An offline threshold sweep (Day 63) plus a Day 64 load test of the cache lookup
+path's read latency. Neither is a live-traffic, live-pgvector measurement — no Docker daemon
+is available in this sandbox (confirmed live: `docker ps` fails with
+`dial unix /var/run/docker.sock: connect: no such file or directory`). The threshold sweep
+validates DESIGN.md §8's shipped `0.92` similarity threshold against real, reproducible
+precision/recall/false-positive numbers; the load test validates `pkg/loadtest`'s harness
+itself (percentile math, concurrency handling) against a simulated-latency store, not
+`semantic-cache-engine`'s real production p99. **Read the "Why these numbers aren't the
+production signal" section (threshold sweep) and "What this load test does and doesn't
+measure" (Day 64) before treating any number here as a claim about live behavior.**
 
 Run on: this build's sandbox environment, `go1.25.0`, 2026-08-04.
 
@@ -138,4 +141,99 @@ structural, not a threshold-tuning problem.
 cd semantic-cache-engine
 go run ./cmd/threshold-sweep --input testdata/threshold-sweep-pairs.jsonl
 go run ./cmd/threshold-sweep --input testdata/threshold-sweep-pairs.jsonl --thresholds 0.55,0.65,0.70,0.75,0.80
+```
+
+---
+
+## Day 64 — Load test (`pkg/loadtest`, `cmd/loadtest`)
+
+**What this measures:** `cachestore.Reader.FindNearest` latency (the hnsw ANN index query
+path) under a closed-loop load generator — a ticker firing at the target QPS, dispatching onto
+a bounded worker pool, per DESIGN.md §10. **What it does not measure:** real Postgres+pgvector
+query cost, network round trips, disk I/O, index size effects, or per-tenant skew. Every run
+below is against `pkg/loadtest.MemStore`, an in-memory `Reader` that sleeps a fixed simulated
+latency before returning a seeded match — no Docker daemon is available in this sandbox (see
+Status above). The numbers say "the harness's own concurrency and percentile math work
+correctly at this load," not "semantic-cache-engine's production p99 is under 15ms."
+
+### Run 1 — headline: 1000 QPS target, 2ms simulated latency, 10s
+
+```
+go run ./cmd/loadtest --qps=1000 --duration=10s --concurrency=64 --sim-latency=2ms
+```
+
+```
+loadtest: PGVECTOR_DSN not set -- running against an in-memory simulated store (sim-latency=2ms), NOT a live pgvector instance
+requests=10000 errors=0 hits=10000 misses=0 achieved_qps=890.9
+p50=2.395111ms p95=2.60088ms p99=2.714906ms
+```
+
+p99 (2.71ms) is comfortably under the 15ms target from this ticket's plan item — but against a
+2ms *simulated* latency floor, that comparison mostly proves the harness adds under 1ms of its
+own overhead at the tail, not that a real pgvector index would clear 15ms under real load.
+
+### Run 2 — same load, doubled concurrency (128), to check the harness isn't concurrency-bound at this QPS
+
+```
+go run ./cmd/loadtest --qps=1000 --duration=10s --concurrency=128 --sim-latency=2ms
+```
+
+```
+requests=10000 errors=0 hits=10000 misses=0 achieved_qps=894.1
+p50=2.377ms p95=2.577222ms p99=2.677247ms
+```
+
+Percentiles are within noise of Run 1 — confirms concurrency=64 was not the limiting factor at
+1000 target QPS / 2ms latency (capacity at 64 workers × 2ms is ~32,000 req/s, far above 1000).
+
+### Run 3 — simulated latency raised to 15ms, the ticket's own SLA boundary
+
+```
+go run ./cmd/loadtest --qps=1000 --duration=5s --concurrency=64 --sim-latency=15ms
+```
+
+```
+requests=5000 errors=0 hits=5000 misses=0 achieved_qps=896.9
+p50=15.49972ms p95=16.029254ms p99=16.150897ms
+```
+
+With the simulated latency itself set at the 15ms target, p99 lands at 16.15ms — the harness
+correctly reports "over budget" instead of silently rounding down, and achieved QPS holds near
+target (concurrency=64 still has headroom: 64 ÷ 0.015s ≈ 4,267 req/s capacity).
+
+### Run 4 — concurrency-starved case: capacity below target QPS
+
+```
+go run ./cmd/loadtest --qps=1000 --duration=5s --concurrency=16 --sim-latency=20ms
+```
+
+```
+requests=5000 errors=0 hits=5000 misses=0 achieved_qps=772.4
+p50=20.595349ms p95=21.084304ms p99=21.146163ms
+```
+
+Concurrency=16 at 20ms latency caps capacity at 16 ÷ 0.02s = 800 req/s, below the 1000 target —
+achieved QPS drops to 772.4 (roughly matching that capacity ceiling) instead of holding at
+1000, which is the harness correctly surfacing "not enough concurrency," not a bug. A real
+deployment sizing `cmd/cachelookup`'s (or a future HTTP wrapper's) worker/connection pool would
+read this the same way: achieved throughput below target at a given concurrency means raise
+concurrency or lower per-call latency, not push more QPS at the same pool.
+
+## What this load test does and doesn't measure
+
+| Question | Does this benchmark answer it? |
+|---|---|
+| Does `pkg/loadtest.Run` correctly compute p50/p95/p99 and achieved QPS under concurrent load? | **Yes** — unit-tested (`pkg/loadtest`) and confirmed against four real runs above with distinct, explainable latency/concurrency regimes. |
+| Is semantic-cache-engine's real pgvector `FindNearest` p99 under 15ms at 1000 QPS in production? | **No.** That needs a live Postgres+pgvector instance (`docker-compose.yml`, not run end to end in this sandbox) seeded with realistic data volume and per-tenant skew — see DESIGN.md §10 and the Experience post for why skew, not the average, is the real risk. |
+| Does `docker-compose.yml` itself parse and wire the pgvector image + schema init correctly? | **Yes** — validated with `docker compose config` (renders one `postgres` service, schema mounted, healthcheck present); never started (`docker ps` fails — no daemon). |
+
+## Reproduce against a live instance
+
+```bash
+cd semantic-cache-engine
+docker compose up -d
+# wait for the healthcheck to pass, then:
+PGVECTOR_DSN="postgres://cache:cache@localhost:5433/semantic_cache" \
+  go run ./cmd/loadtest --dsn "$PGVECTOR_DSN" --qps=1000 --duration=30s --concurrency=64
+docker compose down -v
 ```

@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT
+# semantic-cache-engine's local dev / load-test stack: a single
+# Postgres+pgvector instance with schema/001_semantic_cache_entries.sql
+# applied on first boot, so cmd/loadtest (or cmd/embedworker,
+# cmd/cachelookup) can run against a real hnsw index instead of
+# pkg/loadtest.MemStore's simulated round trip. See README.md's
+# "Load test (Day 64)" section and DESIGN.md §10.
+#
+# Usage:
+#   docker compose up -d
+#   PGVECTOR_DSN="postgres://cache:cache@localhost:5433/semantic_cache" \
+#     go run ./cmd/loadtest --dsn "$PGVECTOR_DSN"
+#   docker compose down -v
+
+name: semantic-cache-engine
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: cache
+      POSTGRES_PASSWORD: cache
+      POSTGRES_DB: semantic_cache
+    ports:
+      # 5433, not 5432 -- this module's compose file is meant to run
+      # standalone alongside a host-level Postgres (or the repo root's
+      # docker-compose.yml, which has no Postgres service of its own but
+      # keeps this module's port choices independent on principle).
+      - "5433:5432"
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+      - ./schema/001_semantic_cache_entries.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cache -d semantic_cache"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  pgvector-data:

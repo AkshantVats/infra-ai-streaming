@@ -2,7 +2,7 @@
 
 `semantic-cache-engine` is RouteIQ's caching layer: it caches LLM responses keyed by embedding similarity instead of exact prompt match, so near-duplicate prompts (same intent, different wording) can still hit cache, and it reports its hits into LensAI's existing inference-event pipeline (`source='cache_hit'`) instead of a separate metrics table. Full design — embedding pipeline, pgvector schema, per-tenant similarity threshold, false-positive budget, LensAI integration, and TTL/decay policy — is in [`DESIGN.md`](DESIGN.md).
 
-**Status: embedding worker (Day 61), cache lookup path (Day 62), and cache analytics (Day 63) implemented. TTL decay is still design-only — see `DESIGN.md` §6.**
+**Status: embedding worker (Day 61), cache lookup path (Day 62), cache analytics (Day 63), and a docker-compose dev stack + load-test harness (Day 64) implemented. TTL decay is still design-only — see `DESIGN.md` §6.**
 
 ## Quickstart
 
@@ -74,6 +74,27 @@ held-out labeled prompt-pair set.
 go run ./cmd/threshold-sweep --input testdata/threshold-sweep-pairs.jsonl
 ```
 
+## Load test (Day 64)
+
+`docker-compose.yml` boots a real Postgres+pgvector instance with `schema/001_semantic_cache_entries.sql`
+applied on first start, and `pkg/loadtest`/`cmd/loadtest` drive `cachestore.Reader.FindNearest`
+(the hnsw index query path — see [`DESIGN.md` §10](DESIGN.md#10-implementation-notes--day-64--docker-compose--load-test))
+at a target QPS, reporting p50/p95/p99 latency and achieved throughput.
+
+```bash
+docker compose up -d
+# wait for the postgres service's healthcheck to pass, then:
+PGVECTOR_DSN="postgres://cache:cache@localhost:5433/semantic_cache" \
+  go run ./cmd/loadtest --dsn "$PGVECTOR_DSN" --qps=1000 --duration=30s --concurrency=64
+docker compose down -v
+```
+
+Without `--dsn` / `PGVECTOR_DSN` set, `cmd/loadtest` runs against `pkg/loadtest.MemStore`, an
+in-memory simulated-latency stand-in — useful for exercising the harness itself without Docker,
+**not** a measurement of real pgvector performance. See [`BENCHMARKS.md`](BENCHMARKS.md)'s
+"Day 64 — Load test" section for real numbers from both this sandbox's `MemStore` runs and the
+exact commands to reproduce against a live instance.
+
 ## Packages
 
 | Package | Responsibility |
@@ -87,7 +108,9 @@ go run ./cmd/threshold-sweep --input testdata/threshold-sweep-pairs.jsonl
 | [`pkg/lookup`](pkg/lookup/lookup.go) | Orchestrates exact-dup fast path → semantic search → threshold check → event emission (DESIGN.md §1) |
 | [`pkg/analytics`](pkg/analytics/analytics.go) | Hit rate / false-positive-rate proxy / estimated cost-saved arithmetic, plus the Grafana panel SQL as exported constants |
 | [`pkg/localsim`](pkg/localsim/localsim.go) | Local bag-of-words cosine similarity, `cmd/threshold-sweep`-only stand-in for `pkg/embedder` when no live OpenAI quota is available |
+| [`pkg/loadtest`](pkg/loadtest/loadtest.go) | Closed-loop QPS load generator over `cachestore.Reader.FindNearest` (p50/p95/p99 + achieved throughput), plus `MemStore`, a simulated-latency `Reader` stand-in for a live Postgres+pgvector instance |
 | [`cmd/embedworker`](cmd/embedworker/main.go) | CLI entry point for the embedding worker |
 | [`cmd/cachelookup`](cmd/cachelookup/main.go) | CLI entry point for the cache lookup path |
 | [`cmd/feedbackwebhook`](cmd/feedbackwebhook/main.go) | HTTP server for the thumbs-down feedback webhook |
 | [`cmd/threshold-sweep`](cmd/threshold-sweep/main.go) | Offline threshold-sweep benchmark tool (see `BENCHMARKS.md`) |
+| [`cmd/loadtest`](cmd/loadtest/main.go) | CLI entry point for the Day 64 load-test harness |
