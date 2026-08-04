@@ -114,6 +114,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		} else {
 			misses++
 			_, _ = fmt.Fprintf(stdout, "MISS tenant=%s threshold=%.4f\n", q.TenantID, result.Threshold)
+			if result.EmitErr != nil {
+				_, _ = fmt.Fprintf(stderr, "cachelookup: cache_miss event not emitted for tenant %s: %v\n", q.TenantID, result.EmitErr)
+			}
 		}
 	}
 

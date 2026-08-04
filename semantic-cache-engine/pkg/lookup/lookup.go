@@ -21,9 +21,13 @@ import (
 )
 
 // EventEmitter is the subset of *lensai.Writer Lookup depends on, so
-// tests can inject a fake instead of an httptest.Server.
+// tests can inject a fake instead of an httptest.Server. EmitCacheMiss
+// exists alongside EmitCacheHit so a Lookup outcome is fully observable
+// either way -- an event stream that only ever records hits has no
+// denominator to compute a real hit rate from (pkg/analytics, Day 63).
 type EventEmitter interface {
 	EmitCacheHit(ctx context.Context, tenantID, modelID, matchedPromptHash string, lookupLatency time.Duration) error
+	EmitCacheMiss(ctx context.Context, tenantID, modelID string, lookupLatency time.Duration) error
 }
 
 // Result is the outcome of a single Lookup call.
@@ -45,11 +49,12 @@ type Result struct {
 	// evaluated against, returned even on a miss so a caller can log
 	// "closest candidate 0.81 vs threshold 0.92" for tuning.
 	Threshold float64
-	// EmitErr is non-nil when Hit is true but posting the cache_hit
-	// event to LensAI failed. A failed emission does not turn a hit
-	// into a miss -- serving the cached response is the correctness-
-	// critical half of a hit, the event is an observability side
-	// channel, so Lookup still returns Hit: true with the response set.
+	// EmitErr is non-nil when posting this outcome's event (cache_hit on
+	// a hit, cache_miss on a miss) to LensAI failed. A failed emission
+	// never changes Hit -- serving (or not serving) the cached response
+	// is the correctness-critical half of a lookup, the event is an
+	// observability side channel, so Lookup always returns the outcome
+	// the store and threshold comparison actually produced.
 	EmitErr error
 }
 
@@ -93,7 +98,7 @@ func Lookup(ctx context.Context, tenantID, prompt string, cfg config.Config, emb
 		return Result{}, fmt.Errorf("lookup: nearest-neighbor search: %w", err)
 	}
 	if !ok || nearest.Similarity < threshold {
-		return Result{Hit: false, Threshold: threshold}, nil
+		return finishMiss(ctx, tenantID, threshold, start, emitter), nil
 	}
 
 	return finishHit(ctx, tenantID, nearest, threshold, start, emitter), nil
@@ -114,6 +119,21 @@ func finishHit(ctx context.Context, tenantID string, m cachestore.Match, thresho
 	}
 	if err := emitter.EmitCacheHit(ctx, tenantID, ModelID, m.PromptHash, time.Since(start)); err != nil {
 		result.EmitErr = fmt.Errorf("lookup: emit cache_hit event: %w", err)
+	}
+	return result
+}
+
+// finishMiss builds a miss Result and, if an emitter is configured, emits
+// a cache_miss event carrying the lookup's total latency -- the
+// denominator half of pkg/analytics's hit rate, alongside finishHit's
+// numerator half.
+func finishMiss(ctx context.Context, tenantID string, threshold float64, start time.Time, emitter EventEmitter) Result {
+	result := Result{Hit: false, Threshold: threshold}
+	if emitter == nil {
+		return result
+	}
+	if err := emitter.EmitCacheMiss(ctx, tenantID, ModelID, time.Since(start)); err != nil {
+		result.EmitErr = fmt.Errorf("lookup: emit cache_miss event: %w", err)
 	}
 	return result
 }

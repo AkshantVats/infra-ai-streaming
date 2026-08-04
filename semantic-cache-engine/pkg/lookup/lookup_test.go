@@ -48,12 +48,18 @@ func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 }
 
 type fakeEmitter struct {
-	calls int
-	err   error
+	calls     int
+	missCalls int
+	err       error
 }
 
 func (f *fakeEmitter) EmitCacheHit(_ context.Context, _, _, _ string, _ time.Duration) error {
 	f.calls++
+	return f.err
+}
+
+func (f *fakeEmitter) EmitCacheMiss(_ context.Context, _, _ string, _ time.Duration) error {
+	f.missCalls++
 	return f.err
 }
 
@@ -106,8 +112,9 @@ func TestLookupSemanticMissBelowThreshold(t *testing.T) {
 		nearest: map[string]cachestore.Match{"tenant-a": {PromptHash: "h2", Response: "semantic answer", Similarity: 0.80}},
 	}
 	cfg := config.Config{Default: config.TenantConfig{SimilarityThreshold: 0.92}}
+	emitter := &fakeEmitter{}
 
-	result, err := Lookup(context.Background(), "tenant-a", "some prompt", cfg, &fakeEmbedder{}, store, nil)
+	result, err := Lookup(context.Background(), "tenant-a", "some prompt", cfg, &fakeEmbedder{}, store, emitter)
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -116,6 +123,48 @@ func TestLookupSemanticMissBelowThreshold(t *testing.T) {
 	}
 	if result.Threshold != 0.92 {
 		t.Errorf("Threshold = %v, want 0.92", result.Threshold)
+	}
+	if emitter.missCalls != 1 {
+		t.Errorf("emitter EmitCacheMiss called %d times, want 1", emitter.missCalls)
+	}
+	if emitter.calls != 0 {
+		t.Errorf("emitter EmitCacheHit called %d times, want 0 on a miss", emitter.calls)
+	}
+}
+
+func TestLookupMissEmissionIsOptional(t *testing.T) {
+	store := &fakeStore{
+		exact:   map[string]cachestore.Match{},
+		nearest: map[string]cachestore.Match{"tenant-a": {PromptHash: "h2", Response: "semantic answer", Similarity: 0.80}},
+	}
+	cfg := config.Config{Default: config.TenantConfig{SimilarityThreshold: 0.92}}
+
+	result, err := Lookup(context.Background(), "tenant-a", "some prompt", cfg, &fakeEmbedder{}, store, nil)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if result.Hit || result.EmitErr != nil {
+		t.Fatalf("Lookup = %+v, want a miss with no EmitErr when emitter is nil", result)
+	}
+}
+
+func TestLookupMissSurvivesEmitFailure(t *testing.T) {
+	store := &fakeStore{
+		exact:   map[string]cachestore.Match{},
+		nearest: map[string]cachestore.Match{"tenant-a": {PromptHash: "h2", Response: "semantic answer", Similarity: 0.80}},
+	}
+	cfg := config.Config{Default: config.TenantConfig{SimilarityThreshold: 0.92}}
+	emitter := &fakeEmitter{err: errors.New("ingest endpoint unreachable")}
+
+	result, err := Lookup(context.Background(), "tenant-a", "some prompt", cfg, &fakeEmbedder{}, store, emitter)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if result.Hit {
+		t.Fatalf("Lookup = %+v, want a miss", result)
+	}
+	if result.EmitErr == nil {
+		t.Error("EmitErr = nil, want the emitter's error to be surfaced")
 	}
 }
 

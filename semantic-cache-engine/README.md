@@ -2,7 +2,7 @@
 
 `semantic-cache-engine` is RouteIQ's caching layer: it caches LLM responses keyed by embedding similarity instead of exact prompt match, so near-duplicate prompts (same intent, different wording) can still hit cache, and it reports its hits into LensAI's existing inference-event pipeline (`source='cache_hit'`) instead of a separate metrics table. Full design — embedding pipeline, pgvector schema, per-tenant similarity threshold, false-positive budget, LensAI integration, and TTL/decay policy — is in [`DESIGN.md`](DESIGN.md).
 
-**Status: embedding worker (Day 61) and cache lookup path (Day 62) implemented. TTL decay is still design-only — see `DESIGN.md` §6–§7.**
+**Status: embedding worker (Day 61), cache lookup path (Day 62), and cache analytics (Day 63) implemented. TTL decay is still design-only — see `DESIGN.md` §6.**
 
 ## Quickstart
 
@@ -48,6 +48,32 @@ go run ./cmd/cachelookup --input queries.jsonl
 
 `queries.jsonl` is one JSON object per line: `{"tenant_id": "...", "prompt": "..."}`.
 
+## Cache analytics (Day 63)
+
+`pkg/analytics` turns the `cache_hit` / `cache_miss` / `cache_feedback` event stream into hit
+rate, a false-positive-rate proxy, and an estimated dollars-saved figure — see
+[`DESIGN.md` §9](DESIGN.md#9-implementation-notes--day-63--cache-analytics) for the full design
+rationale, [`deploy/grafana/provisioning/dashboards/semantic-cache-analytics.json`](../deploy/grafana/provisioning/dashboards/semantic-cache-analytics.json)
+for the Grafana dashboard, and [`BENCHMARKS.md`](BENCHMARKS.md) for a threshold sweep validating
+(with caveats — no live embedding API in this sandbox) DESIGN.md §8's shipped `0.92` default.
+
+**Thumbs-down webhook (`cmd/feedbackwebhook`)** — the minimal real consumer DESIGN.md §4 called
+for: a user can flag a specific cache hit as wrong.
+
+```bash
+export LENSAI_INGEST_URL="http://localhost:8080/ingest"
+export PORT=8090   # optional, defaults to 8090
+go run ./cmd/feedbackwebhook
+# POST http://localhost:8090/feedback/thumbsdown  {"tenant_id": "...", "prompt_hash": "..."}
+```
+
+**Threshold sweep (`cmd/threshold-sweep`)** — validates a similarity threshold against a
+held-out labeled prompt-pair set.
+
+```bash
+go run ./cmd/threshold-sweep --input testdata/threshold-sweep-pairs.jsonl
+```
+
 ## Packages
 
 | Package | Responsibility |
@@ -59,5 +85,9 @@ go run ./cmd/cachelookup --input queries.jsonl
 | [`pkg/config`](pkg/config/config.go) | Per-tenant similarity threshold config, default `0.92` (DESIGN.md §3) |
 | [`pkg/lensai`](pkg/lensai/writer.go) | Dual-writes `source=cache_hit` events to LensAI's `/ingest` (DESIGN.md §5) |
 | [`pkg/lookup`](pkg/lookup/lookup.go) | Orchestrates exact-dup fast path → semantic search → threshold check → event emission (DESIGN.md §1) |
+| [`pkg/analytics`](pkg/analytics/analytics.go) | Hit rate / false-positive-rate proxy / estimated cost-saved arithmetic, plus the Grafana panel SQL as exported constants |
+| [`pkg/localsim`](pkg/localsim/localsim.go) | Local bag-of-words cosine similarity, `cmd/threshold-sweep`-only stand-in for `pkg/embedder` when no live OpenAI quota is available |
 | [`cmd/embedworker`](cmd/embedworker/main.go) | CLI entry point for the embedding worker |
 | [`cmd/cachelookup`](cmd/cachelookup/main.go) | CLI entry point for the cache lookup path |
+| [`cmd/feedbackwebhook`](cmd/feedbackwebhook/main.go) | HTTP server for the thumbs-down feedback webhook |
+| [`cmd/threshold-sweep`](cmd/threshold-sweep/main.go) | Offline threshold-sweep benchmark tool (see `BENCHMARKS.md`) |

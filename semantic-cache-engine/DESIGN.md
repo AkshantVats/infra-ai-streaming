@@ -171,3 +171,52 @@ Day 61 left the similarity lookup, LensAI dual-write, and TTL decay design-only.
 **`FindNearest` returns the closest candidate regardless of threshold; `pkg/lookup` decides hit vs. miss.** Keeping the threshold comparison out of the SQL query means a caller (or a future tuning tool) can log "closest candidate was 0.81 against a 0.92 threshold" for a miss, which a query that filtered by threshold server-side would discard silently.
 
 **`cmd/cachelookup` mirrors `cmd/embedworker`'s CLI shape.** Same `--input` JSON Lines flag, same required-env-var fail-fast pattern (`OPENAI_API_KEY`, `PGVECTOR_DSN`), same `run(args, stdout, stderr) int` split for testability without exec'ing a built binary. `LENSAI_INGEST_URL` and `CACHE_CONFIG_PATH` are optional: omitting the former skips `cache_hit` emission entirely (`pkg/lookup.Lookup` accepts a `nil` `EventEmitter`), and omitting the latter falls back to `pkg/config.DefaultThreshold` for every tenant.
+
+---
+
+## 9. Implementation notes (Day 63 — cache analytics)
+
+Days 61–62 populated and queried the cache. Neither day made the cache's *quality* visible: no
+hit rate, no false-positive signal, no dollar figure. Day 63 closes that gap with `pkg/analytics`,
+`pkg/feedback`, `cmd/feedbackwebhook`, `cmd/threshold-sweep`, and a Grafana dashboard, plus one
+change to §1's lookup path itself.
+
+**A cache_miss event was missing, and a hit-rate metric without one is a vanity metric.** Before
+today, `pkg/lookup.Lookup` only ever emitted an event on a hit (`pkg/lensai.EmitCacheHit`) — a
+miss returned silently. That means the event stream had no denominator: counting `cache_hit`
+rows alone can only trend toward "the cache always works," not because it does, but because
+misses were never recorded anywhere. `pkg/lensai.SourceCacheMiss` and
+`EmitCacheMiss`/`EventEmitter.EmitCacheMiss` (a breaking, deliberate change to the `EventEmitter`
+interface `pkg/lookup` depends on) close that gap: every lookup outcome is now observable, not
+just the successful ones. `pkg/analytics.HitRateQuery` divides by `count(source IN ('cache_hit',
+'cache_miss'))`, not `count(source = 'cache_hit')` alone.
+
+**The thumbs-down webhook is DESIGN.md §4's review pass, minimized to what's actually
+buildable today.** §4 called for "a sampled human/LLM-judge review pass" over `cache_hit`
+events. `pkg/feedback` + `cmd/feedbackwebhook` implement the smallest real slice of that: a user
+who got a wrong cached answer can flag the specific hit (`{tenant_id, prompt_hash}`), dual-written
+as `source=cache_feedback, status=thumbs_down` onto the same `infra_ai.inference_events` table
+`cache_hit` already uses — §5's "one clearinghouse ledger" principle applied a second time,
+rather than a parallel feedback table needing its own dashboard and its own tenant/model join.
+`pkg/analytics.FalsePositiveRateProxy` is named "proxy," not "rate," on purpose: it is
+`thumbs_down / hits` from users who noticed and bothered to flag, a **lower bound** on the true
+false-positive rate §4 defines, not a measurement of it.
+
+**The threshold sweep couldn't use the real embedder — `OPENAI_API_KEY` is at its billing quota
+limit in this sandbox (confirmed live, HTTP 429 `insufficient_quota`, same constraint Day 62 hit
+for DALL-E).** `cmd/threshold-sweep` uses `pkg/localsim.TokenCosineSimilarity`, a local
+bag-of-words proxy, against a small hand-labeled held-out set (`testdata/threshold-sweep-pairs.jsonl`).
+The result is documented in full in `BENCHMARKS.md`, including the finding that this proxy's
+similarity scores don't land in §3's `0.88`–`0.96` embedding-calibrated range at all, and that
+lexically-similar-but-intent-different pairs (§3's own "delete my account" example) score
+*higher* on this proxy than several true paraphrases — concrete evidence for why §1 embeds
+prompts into a learned semantic space rather than comparing raw tokens, even though it can't
+validate the shipped `0.92` default on the real scale.
+
+**Grafana panel SQL is kept identical to `pkg/analytics`'s exported query constants, not
+independently authored.** `deploy/grafana/provisioning/dashboards/semantic-cache-analytics.json`'s
+three stat panels' `rawSql` are copy-pasted from `HitRateQuery`, `FalsePositiveProxyQuery`, and
+`CostSavedQuery` — both sides are commented to say so, so an editor changing one without the
+other is flagged by comment, not silently drifted apart (no live ClickHouse in this sandbox to
+enforce it with an automated test, the same gap already logged for Days 61–62's pgvector
+integration tests).
