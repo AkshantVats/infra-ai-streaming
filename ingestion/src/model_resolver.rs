@@ -22,7 +22,7 @@ struct EvalRequest<'a> {
 }
 
 /// ModelResolver calls the flagd sidecar to resolve the active model version.
-/// Thread-safe via Arc<AtomicU32> failure counter for the circuit breaker.
+/// Thread-safe via `Arc<AtomicU32>` failure counter for the circuit breaker.
 #[derive(Clone)]
 pub struct ModelResolver {
     client: reqwest::Client,

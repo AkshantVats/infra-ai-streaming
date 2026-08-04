@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/IBM/sarama"
 	"github.com/AkshantVats/tool-call-analyzer/pkg/types"
+	"github.com/IBM/sarama"
 	"github.com/IBM/sarama/mocks"
 )
 
