@@ -89,6 +89,17 @@ jobs:
       - name: Go test (semantic-cache-engine)
         run: cd semantic-cache-engine && go test -race ./...
 
+      - name: gofmt (check, cost-budget-enforcer)
+        run: |
+          cd cost-budget-enforcer
+          test -z "$(gofmt -l .)"
+
+      - name: Go vet (cost-budget-enforcer)
+        run: cd cost-budget-enforcer && go vet ./...
+
+      - name: Go test (cost-budget-enforcer)
+        run: cd cost-budget-enforcer && go test -race ./...
+
   # ── docker-compose config validation ─────────────────────────────────────
   # Root docker-compose.yml unifies traceforge, agent-replay-engine,
   # agent-benchmark-runner, and tool-call-analyzer into one stack (Day 56).
