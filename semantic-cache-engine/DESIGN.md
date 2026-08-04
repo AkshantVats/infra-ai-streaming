@@ -220,3 +220,52 @@ three stat panels' `rawSql` are copy-pasted from `HitRateQuery`, `FalsePositiveP
 other is flagged by comment, not silently drifted apart (no live ClickHouse in this sandbox to
 enforce it with an automated test, the same gap already logged for Days 61–62's pgvector
 integration tests).
+
+---
+
+## 10. Implementation notes (Day 64 — docker-compose + load test)
+
+Days 60–63 built and validated the cache entirely against fakes: `pkg/localsim` stood in for
+the embedder, in-memory `Reader`/`Writer` fakes stood in for Postgres in every unit test, and
+no day had ever run against a real pgvector index. Day 64 adds the piece that makes a real run
+possible (`docker-compose.yml`) and a harness that measures what actually matters once traffic
+is concurrent: not whether a lookup returns the right answer, but how long it takes under load,
+at the tail, not the mean.
+
+**The harness measures `FindNearest` directly, not the full `pkg/lookup.Lookup` path.**
+`Lookup` calls the embedder before it calls the store, and the embedding API's latency is a
+separate SLA from the index's own query cost — bundling them would mean a slow OpenAI response
+gets blamed on `hnsw` tuning, or a fast cached-embedding day makes the index look faster than it
+is. `pkg/loadtest.Run` drives `cachestore.Reader.FindNearest` (the ANN index query,
+§2's `hnsw` index) directly, the same interface `cmd/cachelookup` already depends on, so the
+number it produces is scoped to exactly one thing: the store's read latency under a given QPS
+and concurrency.
+
+**The load generator is closed-loop, and that's a real, documented limitation, not an
+oversight.** A ticker fires at the target QPS; each tick dispatches onto a bounded worker pool
+(`Config.Concurrency`) that waits for a `FindNearest` call to return before that worker is free
+again. Under a real slowdown, a closed-loop harness's workers stall on the slow calls instead of
+generating new load the way independent real clients would — the well-known "coordinated
+omission" problem — so `pkg/loadtest.Result`'s p99 is a lower bound on what an open-loop,
+fixed-arrival-rate generator would report at the same nominal QPS, not an upper bound. The AI
+Learning post for today develops this distinction with a toll-booth analogy; DESIGN.md records
+it here as the harness's known scope limit.
+
+**No Docker daemon is available in this sandbox — confirmed live, not assumed.** `docker ps`
+returns `dial unix /var/run/docker.sock: connect: no such file or directory`, the same
+constraint Day 56 logged for the root `docker-compose.yml`. `docker-compose.yml` is validated
+with `docker compose config` (renders cleanly: one `postgres` service on `pgvector/pgvector:pg16`,
+schema mounted as an init script, healthcheck, named volume) but has never been run end to end
+here. `cmd/loadtest` therefore defaults to `pkg/loadtest.MemStore` — an in-memory `Reader` that
+sleeps a configurable simulated latency before returning a seeded match — whenever `--dsn` /
+`PGVECTOR_DSN` is empty, the same "fake stands in for an unavailable live dependency, and says so
+in its own doc comment" shape `pkg/localsim` established on Day 63 for the missing OpenAI quota.
+
+**`MemStore`'s numbers are not semantic-cache-engine's production p99.** A flat simulated
+latency has none of a real index's size effects, disk I/O, or per-tenant skew — and skew is
+exactly the risk today's Experience post ties back to the Agoda cardinality incident: an
+average hides which tenant's queries are actually slow. `BENCHMARKS.md`'s Day 64 section states
+this scope explicitly next to the numbers, and gives the exact commands (`docker compose up -d`
++ `PGVECTOR_DSN=... go run ./cmd/loadtest --dsn "$PGVECTOR_DSN"`) to reproduce against a real
+instance once Docker is available, seeded with realistic per-tenant skew rather than the single
+synthetic tenant this sandbox run used.
