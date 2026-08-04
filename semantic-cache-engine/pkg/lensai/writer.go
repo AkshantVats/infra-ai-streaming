@@ -24,6 +24,33 @@ import (
 // "benchmark_run", and "tool_call" values on the same field.
 const SourceCacheHit = "cache_hit"
 
+// SourceCacheFeedback is the InferenceEvent.source value DESIGN.md §8's
+// Day 63 implementation notes add: a user-reported thumbs-down on a
+// specific cache hit, dual-written onto the same infra_ai.inference_events
+// table cache_hit already uses (DESIGN.md §5's "one clearinghouse ledger"
+// principle) rather than a second table that would need its own dashboard
+// and its own join back to tenant/model data.
+const SourceCacheFeedback = "cache_feedback"
+
+// SourceCacheMiss is the InferenceEvent.source value DESIGN.md §8's Day 63
+// implementation notes add: a lookup that found no candidate above the
+// tenant's threshold. Without this value, hit rate (pkg/analytics) has no
+// denominator -- counting only cache_hit events makes "hit rate" trend
+// toward 100% by construction, since the event stream would only ever
+// record successes. A miss costs no model call by itself (the caller
+// falls through to a real inference, logged separately with its own
+// source), so cache_miss exists purely to make lookup outcomes fully
+// observable, not to represent spend.
+const SourceCacheMiss = "cache_miss"
+
+// StatusThumbsDown is the Event.Status value EmitCacheFeedback sets. It is
+// the only feedback status this module emits today -- DESIGN.md §4's full
+// design calls for a sampled human/LLM-judge review pass that could label
+// both correct and incorrect hits, but the webhook this status backs
+// (pkg/feedback) is deliberately the minimal real signal available without
+// that pipeline: a user flagging a wrong answer, nothing more.
+const StatusThumbsDown = "thumbs_down"
+
 // Event mirrors ingestion/src/handlers/event.rs::InferenceEvent's wire
 // format, matching tool-call-analyzer/pkg/lensai.Event's field set so a
 // Go HTTP client can POST straight to LensAI's existing /ingest endpoint
@@ -92,6 +119,103 @@ func (w *Writer) EmitCacheHit(ctx context.Context, tenantID, modelID, matchedPro
 		CostUSD:         0,
 		Status:          "ok",
 		Source:          SourceCacheHit,
+	}
+
+	payload, err := json.Marshal(ingestRequest{Events: []Event{evt}})
+	if err != nil {
+		return fmt.Errorf("lensai: marshal failed: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.ingestURL, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("lensai: build request failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(tenantHeader, tenantID)
+
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("lensai: HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("lensai: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// EmitCacheMiss posts a single cache_miss event for a lookup that found no
+// candidate above tenantID's threshold. It carries no trace_id -- there is
+// no matched entry to trace back to -- and lookupLatency is the same
+// lookup-timing value EmitCacheHit records, so hit and miss events are
+// comparable on latency in a Grafana panel, not just on outcome.
+func (w *Writer) EmitCacheMiss(ctx context.Context, tenantID, modelID string, lookupLatency time.Duration) error {
+	if tenantID == "" {
+		return fmt.Errorf("lensai: tenant_id is required")
+	}
+
+	evt := Event{
+		TenantID:        tenantID,
+		ModelID:         modelID,
+		TimestampUnixMs: uint64(time.Now().UnixMilli()),
+		LatencyMs:       uint32(lookupLatency.Milliseconds()),
+		CostUSD:         0,
+		Status:          "ok",
+		Source:          SourceCacheMiss,
+	}
+
+	payload, err := json.Marshal(ingestRequest{Events: []Event{evt}})
+	if err != nil {
+		return fmt.Errorf("lensai: marshal failed: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.ingestURL, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("lensai: build request failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(tenantHeader, tenantID)
+
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("lensai: HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("lensai: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// EmitCacheFeedback posts a single cache_feedback event recording a
+// thumbs-down on the cache hit that matched matchedPromptHash for
+// tenantID. modelID identifies the lookup path the same way EmitCacheHit's
+// modelID parameter does (callers pass pkg/lookup.ModelID), so a
+// cache_feedback row and the cache_hit row it's flagging share the same
+// model_id and are attributable to the same lookup path in a Grafana
+// panel. It shares EmitCacheHit's envelope and injection shape -- same
+// tenant header, same ingest endpoint, same error handling -- so a caller
+// (pkg/feedback's HTTP handler) never has to reason about two different
+// failure modes for what is, from LensAI's point of view, the same event
+// pipeline with a different source value.
+func (w *Writer) EmitCacheFeedback(ctx context.Context, tenantID, modelID, matchedPromptHash string) error {
+	if tenantID == "" {
+		return fmt.Errorf("lensai: tenant_id is required")
+	}
+	if matchedPromptHash == "" {
+		return fmt.Errorf("lensai: matched prompt hash is required")
+	}
+
+	evt := Event{
+		TenantID:        tenantID,
+		ModelID:         modelID,
+		TraceID:         matchedPromptHash,
+		TimestampUnixMs: uint64(time.Now().UnixMilli()),
+		CostUSD:         0,
+		Status:          StatusThumbsDown,
+		Source:          SourceCacheFeedback,
 	}
 
 	payload, err := json.Marshal(ingestRequest{Events: []Event{evt}})

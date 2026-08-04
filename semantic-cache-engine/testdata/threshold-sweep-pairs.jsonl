@@ -1,0 +1,24 @@
+{"prompt_a": "Summarize this document for me", "prompt_b": "Give me a summary of this document", "duplicate": true}
+{"prompt_a": "Can you summarize this doc?", "prompt_b": "Please provide a summary of this document", "duplicate": true}
+{"prompt_a": "Translate this paragraph to French", "prompt_b": "Please translate this paragraph into French", "duplicate": true}
+{"prompt_a": "What's the weather like in Bangkok today?", "prompt_b": "Tell me today's weather in Bangkok", "duplicate": true}
+{"prompt_a": "List the top 5 hotels in Phuket", "prompt_b": "Give me the top five hotels in Phuket", "duplicate": true}
+{"prompt_a": "How do I reset my password?", "prompt_b": "What are the steps to reset my password?", "duplicate": true}
+{"prompt_a": "Explain how a Kafka consumer group works", "prompt_b": "Can you explain how Kafka consumer groups work?", "duplicate": true}
+{"prompt_a": "Write a haiku about autumn leaves", "prompt_b": "Compose a haiku about autumn leaves", "duplicate": true}
+{"prompt_a": "Convert 100 USD to EUR", "prompt_b": "What is 100 US dollars in euros?", "duplicate": true}
+{"prompt_a": "Give me a recipe for banana bread", "prompt_b": "Can you share a banana bread recipe?", "duplicate": true}
+{"prompt_a": "What are the cancellation terms for this booking?", "prompt_b": "Tell me the cancellation policy for this reservation", "duplicate": true}
+{"prompt_a": "Draft a polite follow-up email to a client", "prompt_b": "Write a polite follow-up email for a client", "duplicate": true}
+{"prompt_a": "Delete my account", "prompt_b": "How do I delete my account?", "duplicate": false}
+{"prompt_a": "Cancel my subscription", "prompt_b": "How do I cancel my subscription?", "duplicate": false}
+{"prompt_a": "What's the cheapest flight to Tokyo?", "prompt_b": "What's the fastest flight to Tokyo?", "duplicate": false}
+{"prompt_a": "Summarize chapter one of this book", "prompt_b": "Summarize chapter two of this book", "duplicate": false}
+{"prompt_a": "Translate this paragraph to French", "prompt_b": "Translate this paragraph to Spanish", "duplicate": false}
+{"prompt_a": "Increase my account's rate limit", "prompt_b": "What is my account's current rate limit?", "duplicate": false}
+{"prompt_a": "Write a haiku about autumn leaves", "prompt_b": "Write a haiku about ocean waves", "duplicate": false}
+{"prompt_a": "How do I reset my password?", "prompt_b": "How do I reset my two-factor authentication?", "duplicate": false}
+{"prompt_a": "List the top 5 hotels in Phuket", "prompt_b": "List the top 5 restaurants in Phuket", "duplicate": false}
+{"prompt_a": "What's the weather like in Bangkok today?", "prompt_b": "What's the weather like in Bangkok next week?", "duplicate": false}
+{"prompt_a": "Give me a recipe for banana bread", "prompt_b": "Give me a recipe for banana smoothie", "duplicate": false}
+{"prompt_a": "Explain how a Kafka consumer group works", "prompt_b": "Explain how a Kafka producer works", "duplicate": false}

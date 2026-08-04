@@ -1,0 +1,181 @@
+{
+  "title": "RouteIQ — Semantic Cache Analytics",
+  "description": "Day 63: hit rate, false-positive-rate proxy, and estimated dollars saved for semantic-cache-engine, computed over infra_ai.inference_events' cache_hit / cache_miss / cache_feedback source values (DESIGN.md §5, §8). The three stat panels' rawSql is kept identical to pkg/analytics's HitRateQuery / FalsePositiveProxyQuery / CostSavedQuery constants — edit both together, not just one, or the dashboard and the tested Go logic will drift apart. The false-positive-rate proxy is a lower bound (DESIGN.md §4): it only counts hits a user noticed was wrong and flagged through the thumbs-down webhook (pkg/feedback), not every wrong hit.",
+  "uid": "semantic-cache-analytics",
+  "schemaVersion": 38,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 0,
+  "fiscalYearStartMonth": 0,
+  "links": [],
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "refresh": "1m",
+  "tags": [
+    "lensai",
+    "semantic-cache-engine",
+    "routeiq",
+    "cache-analytics"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "tenant_id",
+        "type": "textbox",
+        "label": "Tenant ID",
+        "description": "Filters every panel to a single tenant_id, matching DESIGN.md §2's tenant-scoped cache table and this module's tenant-scoped false-positive budget (§4).",
+        "current": {
+          "value": "demo"
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Cache Hit Rate — ${tenant_id}",
+      "description": "hits / (hits + misses) over infra_ai.inference_events. Requires cache_miss events (pkg/lensai.SourceCacheMiss, Day 63) as the denominator -- counting cache_hit alone has no \"attempted lookups\" to divide by. Matches pkg/analytics.HitRateQuery and pkg/analytics.HitRate.",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 6 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.8 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/^hit_rate$/", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "queryType": "sql",
+          "format": 1,
+          "rawSql": "SELECT\n  countIf(source = 'cache_hit') AS hits,\n  countIf(source = 'cache_miss') AS misses,\n  countIf(source = 'cache_hit') / countIf(source IN ('cache_hit', 'cache_miss')) AS hit_rate\nFROM infra_ai.inference_events\nWHERE tenant_id = '${tenant_id}' AND $__timeFilter(timestamp)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "False-Positive Rate Proxy — ${tenant_id}",
+      "description": "thumbs_down / hits, a LOWER BOUND on DESIGN.md §4's true false-positive rate: only counts hits a user noticed was wrong and flagged via the thumbs-down webhook (pkg/feedback, cmd/feedbackwebhook). Matches pkg/analytics.FalsePositiveProxyQuery and pkg/analytics.FalsePositiveRateProxy. DESIGN.md §4's target upper bound is 0.1% -- thresholds below flag at 0.1% (yellow) and 1% (red) of this proxy, understanding the true rate could be higher.",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 6 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.001 },
+              { "color": "red", "value": 0.01 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/^false_positive_proxy$/", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "queryType": "sql",
+          "format": 1,
+          "rawSql": "SELECT\n  countIf(source = 'cache_feedback' AND status = 'thumbs_down') AS thumbs_down,\n  countIf(source = 'cache_hit') AS hits,\n  countIf(source = 'cache_feedback' AND status = 'thumbs_down') / countIf(source = 'cache_hit') AS false_positive_proxy\nFROM infra_ai.inference_events\nWHERE tenant_id = '${tenant_id}' AND $__timeFilter(timestamp)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Estimated Cost Saved (USD) — ${tenant_id}",
+      "description": "hits * average real-inference cost_usd over the same tenant and window -- what those hits would have cost had each one missed and fallen through to inference. cache_hit events always carry cost_usd=0 (pkg/lensai.EmitCacheHit), so this is an estimate built from the tenant's own inference cost mix, not a sum of the ledger's cost_usd column. Matches pkg/analytics.CostSavedQuery and pkg/analytics.EstimatedCostSaved.",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 6 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": { "mode": "fixed", "fixedColor": "green" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/^estimated_cost_saved_usd$/", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "queryType": "sql",
+          "format": 1,
+          "rawSql": "SELECT\n  (SELECT countIf(source = 'cache_hit') FROM infra_ai.inference_events\n    WHERE tenant_id = '${tenant_id}' AND $__timeFilter(timestamp))\n  *\n  (SELECT avgIf(cost_usd, source = '' OR source = 'inference') FROM infra_ai.inference_events\n    WHERE tenant_id = '${tenant_id}' AND $__timeFilter(timestamp) AND cost_usd > 0)\n  AS estimated_cost_saved_usd",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Hits vs Misses Over Time — ${tenant_id}",
+      "description": "cache_hit and cache_miss event counts per minute, the raw series the hit-rate stat panel summarizes -- lets an operator see whether a hit-rate dip is a real drop in cache effectiveness or just low traffic (few lookups, high variance).",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 6, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "queryType": "sql",
+          "format": 0,
+          "rawSql": "SELECT\n  $__timeInterval(timestamp) AS time,\n  source,\n  count() AS events\nFROM infra_ai.inference_events\nWHERE tenant_id = '${tenant_id}' AND source IN ('cache_hit', 'cache_miss') AND $__timeFilter(timestamp)\nGROUP BY time, source\nORDER BY time",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
