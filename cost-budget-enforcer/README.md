@@ -2,7 +2,7 @@
 
 `cost-budget-enforcer` is RouteIQ's second module (after `semantic-cache-engine`): HTTP middleware that sits in front of an outbound LLM call and caps how much a tenant can spend on tokens inside a rolling daily window. Full design — the sliding-window counter, the three-threshold alert/soft/hard split, graceful degradation to a cheaper model, and the debounced webhook contract — is in [`DESIGN.md`](DESIGN.md).
 
-**Status: Day 65 shipped the design. Day 66 implements it — `pkg/store`'s Redis-backed weighted counter, `pkg/enforcer`'s threshold decision, and `pkg/middleware`'s `net/http` wrapper.**
+**Status: Day 65 shipped the design. Day 66 implemented the enforcement path — `pkg/store`'s Redis-backed weighted counter, `pkg/enforcer`'s threshold decision, and `pkg/middleware`'s `net/http` wrapper. Day 67 adds the Admin API — `pkg/admin`'s `PATCH /tenants/{id}/budget` and `pkg/audit`'s Kafka-backed audit trail — so a tenant's budget can change without a config-file edit and a restart.**
 
 ## Quickstart
 
@@ -67,6 +67,39 @@ mw := &middleware.Middleware{
 http.Handle("/v1/chat/completions", mw.Wrap(llmProxyHandler))
 ```
 
-## Out of scope (Day 66)
+## Admin API (Day 67)
 
-No live Redis instance exercised outside `miniredis` (no Docker daemon in this build environment, the same constraint Day 65's `DESIGN.md` logged). No tenant-facing UI for `alert_webhook_url` configuration — still deferred per `DESIGN.md`'s Day 65 scope note. Per-tenant threshold overrides are supported by `pkg/config` but not yet exercised by any caller.
+`pkg/admin.Handler` serves one route, `PATCH /tenants/{id}/budget`, that patches any subset of a tenant's `config.TenantConfig` fields in place on a `config.LiveStore` — the mutable counterpart to the static `config.Config` `Load` returns — without restarting the process that owns the `enforcer.Enforcer` reading it.
+
+```bash
+curl -X PATCH http://localhost:8080/tenants/acme/budget \
+  -H 'X-Admin-Actor: akshant@example.test' \
+  -H 'Content-Type: application/json' \
+  -d '{"budget_tokens": 5000000}'
+```
+
+Every field in the request body is optional — omitted fields keep their current value, so a caller changing only `budget_tokens` cannot accidentally reset `fallback_model` to empty. The merged result is validated (`TenantConfig.Validate`: positive budget, positive window, `0 < alert < soft < hard`) before it's committed; an invalid patch is rejected with `422` and the store is left untouched.
+
+**Audit-first, not audit-eventually.** Every applied patch is published to `pkg/audit` (topic `cost_budget_audit_log`, keyed by tenant ID) *before* the handler responds `200`. If that publish fails, the handler rolls the in-memory change back with `LiveStore.Set` and responds `503` — the opposite of `pkg/middleware`'s fail-open choice on a Redis error. The two failures aren't symmetric: a lost per-request budget check costs one over-permissive request that the next request corrects; a budget change nobody can prove happened is a compliance gap with no way to reconstruct it after the fact. Fail-open protects the request path; fail-closed protects the record.
+
+```go
+store := config.NewLiveStore(cfg) // cfg from config.Load, same as before
+kafkaPub := audit.NewKafkaPublisher([]string{"localhost:9092"})
+defer kafkaPub.Close()
+
+adminHandler := &admin.Handler{Store: store, Audit: kafkaPub}
+http.Handle("/tenants/", adminHandler)
+
+// enforcer.Enforcer and middleware.Middleware now read live values:
+mw := &middleware.Middleware{
+    Enforcer: enf,
+    Config:   func(tenantID string) config.TenantConfig { return store.ForTenant(tenantID) },
+    // ...
+}
+```
+
+## Out of scope
+
+**Day 66.** No live Redis instance exercised outside `miniredis` (no Docker daemon in this build environment, the same constraint Day 65's `DESIGN.md` logged). No tenant-facing UI for `alert_webhook_url` configuration — still deferred per `DESIGN.md`'s Day 65 scope note.
+
+**Day 67.** No live Kafka broker in this build environment (same constraint as Redis above) — `pkg/audit.KafkaPublisher` is exercised against an unreachable address to confirm its error path, not against a real cluster; `TestBudgetChangeEventRoundTrips` covers the wire format independently. No authentication/authorization on the Admin API itself — `X-Admin-Actor` is trusted as given, recorded for the audit trail, and not verified; a network-boundary auth layer (mTLS, an API gateway) is assumed to sit in front of this handler in any real deployment, the same assumption the rest of this repo's internal-facing endpoints make. No bulk/multi-tenant patch endpoint — one tenant per request, matching the path shape.
