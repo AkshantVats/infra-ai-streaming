@@ -107,3 +107,48 @@ So: the alert threshold's entire job is early, unambiguous warning, and a deboun
 ## Out of scope (Day 65)
 
 No live Redis instance exercised in this sandbox (no Docker daemon — the same constraint Day 56 and Day 64 both logged); the Lua script above is validated by reading, not by running against a live server. No change to `ingestion`'s existing per-tenant rate limiter (§4 of the root `DESIGN.md`) — that limiter governs request rate, this module governs token spend, and the two are deliberately kept as separate mechanisms with separate Redis keyspaces (`ratelimit:{tenant_id}` vs `budget:{tenant_id}`) rather than merged into one, because merging them would make it impossible to alert on one axis without alerting on the other. No UI or dashboard for `alert_webhook_url` configuration — Day 65 specifies the contract; wiring tenant-facing configuration is deferred to the implementation day.
+
+---
+
+## 5. Admin API and audit log (Day 67)
+
+**The gap Day 66 left open.** `pkg/config.Config` is loaded once, from a file, at process start. Changing a tenant's budget meant editing that file and restarting whatever process holds the `Enforcer` — a deploy for what is operationally a one-line number change. Day 67 closes that gap with `pkg/config.LiveStore`, a mutex-guarded wrapper the running process can patch in place, and `pkg/admin`'s `PATCH /tenants/{id}/budget` as the interface to it.
+
+**Partial update, not full replace.** The request body is a set of optional fields (`TenantConfigPatch`, every field a pointer). A caller who wants to raise `budget_tokens` for a tenant mid-incident sends `{"budget_tokens": ...}` and nothing else; every other field — `fallback_model`, the three thresholds, the webhook URL — carries over unchanged. A full-replace PUT would force that caller to first read the current config just to echo back the fields they didn't mean to touch, and any read-then-write has the same race §1's Lua script exists to close, this time between two admins instead of two requests.
+
+**Why the merged result is validated before it's committed, not after.** `TenantConfig.Validate` (positive budget, positive window, `0 < alert < soft < hard`) runs against the *candidate* — before + patch merged — and only a passing candidate is written to the store. A patch that would leave `hard_threshold` below `soft_threshold` is rejected with `422` and the store is untouched; §2's whole three-threshold design depends on that ordering holding, and a live PATCH endpoint is now a second place (besides the Day 65 config file) that ordering could be violated by a typo.
+
+**Why the audit publish is fail-closed, when §1–§4's enforcement path is deliberately fail-open.** `pkg/middleware.Wrap` forwards a request unmodified when Redis is unreachable — a guarded call this document already justified in §1's "why a Lua script" discussion: the enforcement path protects request availability, and a missed budget check for one request is a bounded, self-correcting cost. The Admin API protects a different thing: a provable record of who changed a tenant's spend limit and when. That record can't be reconstructed after the fact if it's lost, so `pkg/admin.Handler` treats a failed `pkg/audit.Publisher.Publish` as fatal to the request — it rolls the just-applied patch back via `LiveStore.Set` and responds `503` — rather than letting an unaudited change stand the way a missed webhook or a missed cache lookup is allowed to. Same system, two failure directions, chosen by what's actually at risk on each path.
+
+**Why Kafka, keyed by tenant ID, `RequireAll` acks.** `pkg/audit.KafkaPublisher` writes to `cost_budget_audit_log`, partitioned by `tenant_id` so one tenant's changes replay in application order on one partition (the same ordering guarantee `ingestion`'s producer gives per-tenant inference events), with `RequiredAcks: kafka.RequireAll` so "Publish returned nil" and "Kafka durably has this record" stay the same fact — a weaker ack level would let the fail-closed guarantee above quietly become fail-open again, just moved one layer down.
+
+```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'primaryColor': '#1e3a5f',
+    'primaryTextColor': '#f0f4f8',
+    'primaryBorderColor': '#4a90d9',
+    'lineColor': '#4a90d9',
+    'secondaryColor': '#0d2137',
+    'tertiaryColor': '#0a1a2e',
+    'background': 'transparent',
+    'nodeBorder': '#4a90d9',
+    'clusterBkg': '#0d2137',
+    'titleColor': '#f0f4f8',
+    'edgeLabelBackground': '#0d2137'
+  }
+}}%%
+flowchart LR
+  admin["PATCH tenants/id/budget"] --> patch["LiveStore.Patch"]
+  patch -->|"invalid"| reject422["422, unchanged"]
+  patch -->|"valid"| audit["audit.Publish"]
+  audit -->|"ok"| ok200["200, committed"]
+  audit -->|"fails"| rollback["LiveStore.Set rollback"] --> reject503["503, unchanged"]
+```
+
+So: Day 67 doesn't change how a request is judged against a budget (§1–§3 stand as shipped); it changes how that budget gets set, and picks the opposite failure direction from the enforcement path for exactly the reason the two paths protect different things.
+
+## Out of scope (Day 67)
+
+No live Kafka broker exercised in this sandbox (no Docker daemon — the same constraint §1's "Out of scope (Day 65)" logs for Redis); `KafkaPublisher` is exercised against an unreachable address to confirm its error path returns rather than hangs, and the wire format is covered independently by a JSON round-trip test. No authentication on the Admin API itself — `X-Admin-Actor` is trusted as supplied and recorded, not verified against any identity provider; a network-boundary auth layer is assumed to sit in front of this handler, same assumption this repo's other internal-facing endpoints make. No consumer for `cost_budget_audit_log` yet — this day ships the producer side of the audit trail only.

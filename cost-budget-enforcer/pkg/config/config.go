@@ -15,6 +15,12 @@ import (
 	"os"
 )
 
+// ErrInvalidThresholds is returned by Validate when the three
+// thresholds are not in strictly increasing alert < soft < hard order —
+// DESIGN.md §2's whole point is that each threshold triggers a
+// distinct action, which only holds if they stay ordered.
+var ErrInvalidThresholds = fmt.Errorf("config: thresholds must satisfy 0 < alert < soft < hard")
+
 // Default thresholds, as fractions of a tenant's budget. DESIGN.md §2
 // fixes these at 80/100/120 and explains why the 20-point gap between
 // soft and hard exists (room for fallback-routed traffic to run before
@@ -94,4 +100,25 @@ func (c Config) ForTenant(tenantID string) TenantConfig {
 		return c.Default
 	}
 	return applyDefaults(TenantConfig{})
+}
+
+// Validate checks that tc is internally consistent: a positive budget,
+// a positive window, and the three thresholds in strictly increasing
+// order. It exists so pkg/admin can reject an Admin API patch before
+// committing it — a Day 65-config-file typo would only ever be caught
+// by someone reading the JSON, but a live PATCH request needs the same
+// check enforced in-process, synchronously, before the bad thresholds
+// ever reach an Enforcer.
+func (tc TenantConfig) Validate() error {
+	if tc.BudgetTokens <= 0 {
+		return fmt.Errorf("config: budget_tokens must be positive, got %d", tc.BudgetTokens)
+	}
+	if tc.WindowSeconds <= 0 {
+		return fmt.Errorf("config: window_seconds must be positive, got %d", tc.WindowSeconds)
+	}
+	if !(0 < tc.AlertThreshold && tc.AlertThreshold < tc.SoftThreshold && tc.SoftThreshold < tc.HardThreshold) {
+		return fmt.Errorf("%w: got alert=%.2f soft=%.2f hard=%.2f",
+			ErrInvalidThresholds, tc.AlertThreshold, tc.SoftThreshold, tc.HardThreshold)
+	}
+	return nil
 }
