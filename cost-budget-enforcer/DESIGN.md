@@ -152,3 +152,49 @@ So: Day 67 doesn't change how a request is judged against a budget (§1–§3 st
 ## Out of scope (Day 67)
 
 No live Kafka broker exercised in this sandbox (no Docker daemon — the same constraint §1's "Out of scope (Day 65)" logs for Redis); `KafkaPublisher` is exercised against an unreachable address to confirm its error path returns rather than hangs, and the wire format is covered independently by a JSON round-trip test. No authentication on the Admin API itself — `X-Admin-Actor` is trusted as supplied and recorded, not verified against any identity provider; a network-boundary auth layer is assumed to sit in front of this handler, same assumption this repo's other internal-facing endpoints make. No consumer for `cost_budget_audit_log` yet — this day ships the producer side of the audit trail only.
+
+---
+
+## 6. Stub gateway — composition order and LensAI spend wiring (Day 68)
+
+**The gap Day 66–67 left open.** `pkg/middleware.Wrap` proves the budget check works as `net/http` middleware, but nothing in this repo yet shows *what it's in front of*. RouteIQ's actual request path is budget check, then a semantic cache lookup (`semantic-cache-engine`), then — only on a cache miss — the model call itself. Day 68's `pkg/gateway.Gateway` is the first place that three-step order exists as running code, and the first place a real (not estimated) dollar amount from a model call reaches LensAI's `cost_usd` stream.
+
+**Why "stub."** `pkg/gateway.CacheClient` and `pkg/gateway.ModelClient` are interfaces with no production implementation wired in here — `cmd/stubgateway` backs them with an always-miss cache and a fixed price-table model. `cost-budget-enforcer` and `semantic-cache-engine` are separate Go modules in this monorepo; collapsing that boundary so `pkg/gateway` could call `semantic-cache-engine/pkg/lookup.Lookup` directly is real future work (see "Out of scope" below), not something a vertical-slice day should reach for. What Day 68 ships instead is the part that has to be right before any real backend is plugged in: the fixed order, and the interface shape a real `CacheClient`/`ModelClient` will implement.
+
+**Why budget check has to run before the cache lookup, not after or in parallel.** A cache lookup is not free — it's a Redis or pgvector round trip, and in a production semantic cache it can itself be a paid embedding-API call on a miss (`semantic-cache-engine/pkg/embedder`). If `pkg/gateway.Handle` checked the cache before the budget, a tenant already over their hard limit would still pay for every cache lookup (and, worse, every embedding call) before finally being rejected — the block would arrive too late to have protected anything. Running `enforcer.Check` first and returning immediately on `Block`, before `Cache.Lookup` or `Model.Call` is ever invoked, is what makes a block's `cost_usd` provably zero instead of "zero for the model call, but something already spent upstream of it." `pkg/gateway/gateway_test.go`'s `TestHandleBlockedNeverTouchesCacheOrModel` asserts this with a spy on both clients — not just that the response says "blocked," but that neither downstream client was ever called.
+
+**Why degrade rewrites the model before the cache lookup runs, not after.** When `enforcer.Check` returns `Degrade`, `Handle` sets `ModelUsed` to the tenant's fallback before calling `Cache.Lookup` — the same ordering `pkg/middleware.rewriteModel` already applies to the JSON body on the HTTP path. A real cache implementation's entry is often keyed (in part) by which model the response came from; looking up against the *original* model and then silently serving that cached response under a *degraded* budget would mean the tenant never actually got the cost reduction Degrade exists to apply. Rewriting first means both the cache lookup and, on a miss, the model call itself see the same (possibly fallback) model name.
+
+**What gets wired to LensAI, and why three sources instead of one.** `pkg/lensai.Writer` (new this day, mirroring `semantic-cache-engine/pkg/lensai`'s shape) emits one of three events per `Handle` call: `gateway_inference` (real `cost_usd` from `ModelClient.Call`), `gateway_cache_hit` (`cost_usd=0`), or `gateway_blocked` (`cost_usd=0`). A single source value would collapse "spent $0.02" and "spent nothing because the cache had it" and "spent nothing because the tenant was over budget" into the same row shape, and a cost dashboard built on that stream couldn't distinguish "the budget enforcer is saving money" from "the model is just being called less." Keeping the zero-cost paths as their own explicit sources is what makes Day 68's AI Learning hook — order matters, wrong order leaks spend — checkable after the fact: a tenant who trips the hard limit should show up in the stream as a `gateway_blocked` row, never as a `gateway_inference` row with a nonzero charge.
+
+```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'primaryColor': '#1e3a5f',
+    'primaryTextColor': '#f0f4f8',
+    'primaryBorderColor': '#4a90d9',
+    'lineColor': '#4a90d9',
+    'secondaryColor': '#0d2137',
+    'tertiaryColor': '#0a1a2e',
+    'background': 'transparent',
+    'nodeBorder': '#4a90d9',
+    'clusterBkg': '#0d2137',
+    'titleColor': '#f0f4f8',
+    'edgeLabelBackground': '#0d2137'
+  }
+}}%%
+flowchart LR
+  req["Gateway.Handle"] --> enf["enforcer.Check"]
+  enf -->|"block"| blocked["EmitBlocked cost=0"]
+  enf -->|"pass / alert"| cache["Cache.Lookup"]
+  enf -->|"degrade"| rewrite["rewrite model"] --> cache
+  cache -->|"hit"| hit["EmitCacheHit cost=0"]
+  cache -->|"miss"| model["Model.Call"] --> spend["EmitSpend real cost_usd"]
+```
+
+So: Day 68 doesn't add a new threshold or a new failure mode to §1–§5's enforcement path — it puts that path in its actual place in the request order, and makes the three ways a request can leave the gateway (blocked, cached, billed) each show up in LensAI as what they actually cost.
+
+## Out of scope (Day 68)
+
+No real `CacheClient` or `ModelClient` implementation — `cmd/stubgateway` uses an always-miss cache and a fixed price-table model, sufficient to prove the ordering and the LensAI wiring but not to measure a real cache hit rate or a real provider's price. No cross-module dependency from `cost-budget-enforcer` to `semantic-cache-engine`; wiring `pkg/gateway.CacheClient` to `semantic-cache-engine/pkg/lookup.Lookup` for real is deferred until RouteIQ's modules need to share more than a design convention. No live Redis or LensAI ingest endpoint in this sandbox (no Docker daemon — the same constraint §1 and §5 both log); `cmd/stubgateway` runs against an in-process `miniredis` and skips LensAI emission when `--lensai-url` is unset.

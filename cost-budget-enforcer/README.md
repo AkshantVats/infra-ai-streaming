@@ -2,7 +2,7 @@
 
 `cost-budget-enforcer` is RouteIQ's second module (after `semantic-cache-engine`): HTTP middleware that sits in front of an outbound LLM call and caps how much a tenant can spend on tokens inside a rolling daily window. Full design — the sliding-window counter, the three-threshold alert/soft/hard split, graceful degradation to a cheaper model, and the debounced webhook contract — is in [`DESIGN.md`](DESIGN.md).
 
-**Status: Day 65 shipped the design. Day 66 implemented the enforcement path — `pkg/store`'s Redis-backed weighted counter, `pkg/enforcer`'s threshold decision, and `pkg/middleware`'s `net/http` wrapper. Day 67 adds the Admin API — `pkg/admin`'s `PATCH /tenants/{id}/budget` and `pkg/audit`'s Kafka-backed audit trail — so a tenant's budget can change without a config-file edit and a restart.**
+**Status: Day 65 shipped the design. Day 66 implemented the enforcement path — `pkg/store`'s Redis-backed weighted counter, `pkg/enforcer`'s threshold decision, and `pkg/middleware`'s `net/http` wrapper. Day 67 adds the Admin API — `pkg/admin`'s `PATCH /tenants/{id}/budget` and `pkg/audit`'s Kafka-backed audit trail — so a tenant's budget can change without a config-file edit and a restart. Day 68 adds `pkg/gateway`'s RouteIQ stub gateway — enforcer, then semantic cache, then model, in that order — and `pkg/lensai`'s dual-write of real spend onto LensAI's `cost_usd` stream.**
 
 ## Quickstart
 
@@ -98,8 +98,24 @@ mw := &middleware.Middleware{
 }
 ```
 
+## Stub gateway (Day 68)
+
+`pkg/gateway.Gateway.Handle` composes the pieces above into RouteIQ's actual request order — budget check, then cache lookup, then model call — and dual-writes each outcome to LensAI via `pkg/lensai.Writer`. `cmd/stubgateway` runs it end to end against an in-process Redis and a fixed price-table model, reading requests from a JSON Lines file:
+
+```bash
+cat >/tmp/requests.jsonl <<'EOF'
+{"tenant_id": "acme", "model": "gpt-4o", "prompt": "summarize this ticket"}
+EOF
+go run ./cmd/stubgateway --input /tmp/requests.jsonl --budget-tokens 5000
+# tenant=acme action=inference model=gpt-4o degraded=false tokens=8 cost_usd=0.0002
+```
+
+A request that crosses the tenant's hard limit never reaches the cache or the model — see DESIGN.md §6 for why that ordering, not just the resulting status code, is the point. Pass `--lensai-url` to also dual-write each outcome (`gateway_inference`, `gateway_cache_hit`, or `gateway_blocked`) to a real ingest endpoint.
+
 ## Out of scope
 
 **Day 66.** No live Redis instance exercised outside `miniredis` (no Docker daemon in this build environment, the same constraint Day 65's `DESIGN.md` logged). No tenant-facing UI for `alert_webhook_url` configuration — still deferred per `DESIGN.md`'s Day 65 scope note.
 
 **Day 67.** No live Kafka broker in this build environment (same constraint as Redis above) — `pkg/audit.KafkaPublisher` is exercised against an unreachable address to confirm its error path, not against a real cluster; `TestBudgetChangeEventRoundTrips` covers the wire format independently. No authentication/authorization on the Admin API itself — `X-Admin-Actor` is trusted as given, recorded for the audit trail, and not verified; a network-boundary auth layer (mTLS, an API gateway) is assumed to sit in front of this handler in any real deployment, the same assumption the rest of this repo's internal-facing endpoints make. No bulk/multi-tenant patch endpoint — one tenant per request, matching the path shape.
+
+**Day 68.** No real `CacheClient`/`ModelClient` — `cmd/stubgateway` uses an always-miss cache and a fixed price table, not a wired `semantic-cache-engine` client or a real model provider. No cross-module import from `cost-budget-enforcer` to `semantic-cache-engine`; the two stay separate Go modules for now (DESIGN.md §6). No live Redis or LensAI endpoint in this sandbox — `cmd/stubgateway` runs against an in-process `miniredis` and skips LensAI emission unless `--lensai-url` is set.
