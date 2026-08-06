@@ -45,6 +45,17 @@ type TenantConfig struct {
 	AlertThreshold  float64 `json:"alert_threshold"`
 	SoftThreshold   float64 `json:"soft_threshold"`
 	HardThreshold   float64 `json:"hard_threshold"`
+
+	// FailClosed overrides this module's default Redis-outage policy for
+	// this tenant. When the Store is unreachable, pkg/middleware.Wrap and
+	// pkg/gateway.Gateway.Handle normally fail open — forward the request
+	// unmetered, the same bet ingestion's rate limiter makes and DESIGN.md
+	// documents as the enforcement path's default. FailClosed flips that
+	// bet for tenants where uncapped spend during an outage is worse than
+	// a 503: the request is rejected instead of forwarded, trading
+	// availability for a hard ceiling on unmetered cost. Defaults to false
+	// (fail open) so existing tenant configs keep today's behavior.
+	FailClosed bool `json:"fail_closed"`
 }
 
 // Config is the parsed tenant budget config file.

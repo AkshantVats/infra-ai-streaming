@@ -124,6 +124,14 @@ type Result struct {
 	// semantic-cache-engine/pkg/lookup.Result.EmitErr gives its own
 	// emission failures.
 	EmitErr error
+	// StoreUnavailable is true when enforcer.Check failed (the budget
+	// Store was unreachable) and the tenant's config.TenantConfig.FailClosed
+	// is set. Cache and Model were never called, the same way they aren't
+	// for Blocked — but this is an infrastructure failure, not a budget
+	// decision, so it's reported on its own field rather than folded into
+	// Blocked, which downstream callers reasonably read as "this tenant
+	// is over budget."
+	StoreUnavailable bool
 }
 
 // Handle runs DESIGN.md §6's fixed order for one request: check the
@@ -145,6 +153,13 @@ func (g *Gateway) Handle(ctx context.Context, tenantID, model, prompt string) (R
 
 	decision, err := g.Enforcer.Check(ctx, tenantID, tokens, cfg)
 	if err != nil {
+		if cfg.FailClosed {
+			// This tenant opted into fail-closed (config.TenantConfig.FailClosed):
+			// an unreachable Store means Handle can no longer prove the
+			// request is under budget, so it stops here rather than
+			// reaching Cache or Model unmetered.
+			return Result{ModelUsed: model, StoreUnavailable: true}, nil
+		}
 		// Fail open, the same choice pkg/middleware.Wrap makes when the
 		// enforcer can't reach Redis: a broken budget check must not take
 		// down the request path it's guarding.

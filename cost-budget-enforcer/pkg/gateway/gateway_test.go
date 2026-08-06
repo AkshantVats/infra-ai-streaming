@@ -44,6 +44,25 @@ func newTestEnforcer(t *testing.T, now time.Time) *enforcer.Enforcer {
 	}
 }
 
+// newChaosEnforcer returns an Enforcer backed by a miniredis instance the
+// caller controls directly, so a test can call mr.Close() mid-run to
+// simulate CHAOS.md Scenario 3 ("Redis lost") for the budget store path
+// gateway.Handle guards.
+func newChaosEnforcer(t *testing.T, now time.Time) (*enforcer.Enforcer, *miniredis.Miniredis) {
+	t.Helper()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis.Run: %v", err)
+	}
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	return &enforcer.Enforcer{
+		Store: store.NewRedisStore(rdb),
+		Now:   func() time.Time { return now },
+	}, mr
+}
+
 // spyCache and spyModel record whether they were ever invoked, so a test
 // can assert the DESIGN.md §6 ordering claim directly: a blocked request
 // must never touch either one.
@@ -283,4 +302,84 @@ type modelFunc func(ctx context.Context, tenantID, model, prompt string) (ModelR
 
 func (f modelFunc) Call(ctx context.Context, tenantID, model, prompt string) (ModelResult, error) {
 	return f(ctx, tenantID, model, prompt)
+}
+
+// TestHandleChaosRedisDownFailsOpenByDefault reproduces CHAOS.md Scenario 3
+// for the gateway path: with FailClosed left false, a request that arrives
+// while the budget Store is unreachable still reaches Cache and Model — the
+// enforcement check is skipped, not the request.
+func TestHandleChaosRedisDownFailsOpenByDefault(t *testing.T) {
+	now := time.Date(2026, 8, 6, 1, 0, 0, 0, time.UTC)
+	enf, mr := newChaosEnforcer(t, now)
+	mr.Close()
+
+	cache := &spyCache{result: CacheResult{Hit: false}}
+	model := &spyModel{result: ModelResult{Response: "ok", TokensUsed: 10, CostUSD: 0.001}}
+	events := &spyEvents{}
+	g := &Gateway{
+		Enforcer: enf,
+		Config:   func(string) config.TenantConfig { return testConfig() },
+		Tokens:   func(string, string) int64 { return 100 },
+		Cache:    cache,
+		Model:    model,
+		Events:   events,
+	}
+
+	result, err := g.Handle(context.Background(), "tenant-a", "gpt-4o", "hello")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if result.StoreUnavailable {
+		t.Fatal("StoreUnavailable = true, want false (fail-open tenant)")
+	}
+	if !model.wasCalled() {
+		t.Error("Model.Call was not called — fail-open should still reach the model")
+	}
+	if result.CostUSD != 0.001 {
+		t.Errorf("CostUSD = %v, want 0.001 (the request went through)", result.CostUSD)
+	}
+}
+
+// TestHandleChaosRedisDownFailsClosedWhenConfigured is the same outage for
+// a tenant with config.TenantConfig.FailClosed set: Handle must stop before
+// Cache or Model, the same way it does for Blocked.
+func TestHandleChaosRedisDownFailsClosedWhenConfigured(t *testing.T) {
+	now := time.Date(2026, 8, 6, 1, 0, 0, 0, time.UTC)
+	enf, mr := newChaosEnforcer(t, now)
+	mr.Close()
+
+	cache := &spyCache{}
+	model := &spyModel{}
+	events := &spyEvents{}
+	cfg := testConfig()
+	cfg.FailClosed = true
+	g := &Gateway{
+		Enforcer: enf,
+		Config:   func(string) config.TenantConfig { return cfg },
+		Tokens:   func(string, string) int64 { return 100 },
+		Cache:    cache,
+		Model:    model,
+		Events:   events,
+	}
+
+	result, err := g.Handle(context.Background(), "tenant-a", "gpt-4o", "hello")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !result.StoreUnavailable {
+		t.Fatal("StoreUnavailable = false, want true (fail-closed tenant)")
+	}
+	if cache.wasCalled() {
+		t.Error("Cache.Lookup was called on a fail-closed store-unavailable request")
+	}
+	if model.wasCalled() {
+		t.Error("Model.Call was called on a fail-closed store-unavailable request")
+	}
+	if result.CostUSD != 0 {
+		t.Errorf("CostUSD = %v, want 0", result.CostUSD)
+	}
+	if events.spends != 0 || events.hits != 0 || events.blocked != 0 {
+		t.Errorf("spend=%d hit=%d blocked=%d events fired, want 0 all (store-unavailable is not a budget block)",
+			events.spends, events.hits, events.blocked)
+	}
 }

@@ -80,3 +80,27 @@ func TestLoadRejectsInvalidJSON(t *testing.T) {
 		t.Fatalf("Load of invalid JSON: want error, got nil")
 	}
 }
+
+func TestFailClosedDefaultsFalseAndOverridesPerTenant(t *testing.T) {
+	path := writeConfig(t, `{
+		"default": {"budget_tokens": 1000000, "fallback_model": "gpt-4o-mini"},
+		"tenants": {"strict-tenant": {"budget_tokens": 5000000, "fallback_model": "claude-haiku", "fail_closed": true}}
+	}`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Default.FailClosed {
+		t.Fatalf("default FailClosed = true, want false when omitted from config")
+	}
+	strict := cfg.ForTenant("strict-tenant")
+	if !strict.FailClosed {
+		t.Fatalf("strict-tenant FailClosed = false, want true from config")
+	}
+	other := cfg.ForTenant("unknown-tenant")
+	if other.FailClosed {
+		t.Fatalf("unknown-tenant FailClosed = true, want false (falls back to default)")
+	}
+}

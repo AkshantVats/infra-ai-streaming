@@ -112,6 +112,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 
 		switch {
+		case result.StoreUnavailable:
+			_, _ = fmt.Fprintf(stdout, "tenant=%s action=fail_closed_503 cost_usd=0\n", req.TenantID)
 		case result.Blocked:
 			_, _ = fmt.Fprintf(stdout, "tenant=%s action=block retry_after=%s cost_usd=0\n", req.TenantID, result.RetryAfter)
 		case result.CacheHit:

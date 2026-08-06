@@ -61,6 +61,15 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 
 		d, err := m.Enforcer.Check(r.Context(), tenantID, tokens, cfg)
 		if err != nil {
+			if cfg.FailClosed {
+				// This tenant opted into fail-closed: an unreachable
+				// Store means we can no longer prove the request is
+				// under budget, so it's rejected rather than forwarded
+				// unmetered. See config.TenantConfig.FailClosed.
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":"budget store unavailable","policy":"fail_closed"}`))
+				return
+			}
 			// Fail open: an enforcer that can't reach Redis must not
 			// take down the request path it's guarding, the same
 			// fail-open choice ingestion/src/rate_limit/token_bucket.rs
