@@ -17,9 +17,21 @@ package stack
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/akshantvats/prompt-fingerprinter/pkg/fingerprint"
 )
+
+// HardTTL is the L1 backfill's expiry. DESIGN.md §3 (Day 70) commits to
+// reading semantic-cache-engine's own freshness policy "rather than
+// inventing an independent expiry" — that policy's hard ceiling
+// (semantic-cache-engine/DESIGN.md §6) is 30 days from write, so this
+// constant is that same number, not a new one. semantic-cache-engine's
+// decay curve (tightening similarity threshold with age) has no L1
+// analog — L1 is an exact-match key, not a similarity search, so there
+// is no threshold for a decaying curve to act on. Only the hard
+// ceiling applies here.
+const HardTTL = 30 * 24 * time.Hour
 
 // Tier identifies which layer resolved a Get call, distinct from the
 // bare Hit bool so a caller (and this package's Metrics) can tell an
@@ -41,7 +53,7 @@ const (
 // has logged for their own Redis dependencies.
 type RedisClient interface {
 	Get(ctx context.Context, key string) (value string, found bool, err error)
-	Set(ctx context.Context, key, value string) error
+	Set(ctx context.Context, key, value string, ttl time.Duration) error
 }
 
 // L2Store is the semantic lookup tier. Get returns the cached response
@@ -115,8 +127,11 @@ func (s *Stack) Get(ctx context.Context, tenantID string, req fingerprint.Prompt
 	s.incL2Hit(ctx, tenantID)
 	// Backfill is best-effort: the L2 response is already resolved and
 	// correct to serve, so a failed write here only costs the next
-	// repeat its L1 speedup, not this request's correctness.
-	_ = s.Redis.Set(ctx, key, response)
+	// repeat its L1 speedup, not this request's correctness. HardTTL
+	// bounds how long this entry can serve a wrong answer if it was
+	// ever written under a colliding key (collision_test.go's drill) —
+	// the entry self-expires rather than persisting indefinitely.
+	_ = s.Redis.Set(ctx, key, response, HardTTL)
 	return Result{Hit: true, Tier: TierL2, Response: response}, nil
 }
 

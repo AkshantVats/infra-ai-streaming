@@ -265,6 +265,18 @@ flowchart LR
   `miss` — via the `Metrics` interface, so a cache stack's health is answerable as "which tier
   did the work," not just a single blended hit rate.
 
+**L1 TTL and the collision drill.** Every L1 backfill carries `stack.HardTTL` (30 days) — the
+same hard ceiling `semantic-cache-engine/DESIGN.md` §6 already commits to, not a second policy
+invented for this module (`prompt-fingerprinter/DESIGN.md` §3 says as much explicitly). A SHA-256
+fingerprint collision is cryptographically implausible, but `pkg/stack/collision_test.go` runs a
+drill anyway: it seeds `MemRedis` at the exact key a collision would produce and confirms two
+things independently contain the blast radius rather than one thing preventing it outright —
+tenant scoping (`RedisKey` folds `tenant_id` into the key, so a collision under one tenant can
+never read back under another) and the TTL (a `FakeClock` advances past `HardTTL` and confirms
+the corrupted entry expires and self-heals via a fresh L2 lookup, with no operator intervention).
+Neither mechanism detects a collision when it happens — an exact-match cache keyed by hash alone
+has no way to — so both exist to bound how much damage one could do if it ever did.
+
 ---
 
 ## Platform

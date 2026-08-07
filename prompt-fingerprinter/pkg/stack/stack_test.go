@@ -23,7 +23,7 @@ func TestGet_L1Hit_SkipsL2(t *testing.T) {
 	key := fingerprint.RedisKey("tenant-a", fingerprint.Fingerprint(req))
 
 	redis := NewMemRedis()
-	if err := redis.Set(ctx, key, "cached response"); err != nil {
+	if err := redis.Set(ctx, key, "cached response", HardTTL); err != nil {
 		t.Fatalf("seed redis: %v", err)
 	}
 	l2 := &MemL2{Responses: map[string]string{"tenant-a": "should never be returned"}}
