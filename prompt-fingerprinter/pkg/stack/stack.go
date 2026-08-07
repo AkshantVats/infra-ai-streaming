@@ -19,8 +19,24 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/akshantvats/prompt-fingerprinter/pkg/fingerprint"
 )
+
+// tracer emits one span per Stack.Get call, tagged with which tier
+// resolved it (DESIGN.md §4's "own observability identity" for an
+// exact hit versus a semantic hit versus a miss — the same
+// distinction Metrics already counts, now visible as a span attribute
+// too). Calling otel.Tracer without configuring a TracerProvider is
+// safe and cheap: the global default is a no-op, so Get behaves
+// identically whether or not a collector is wired up — the same
+// "correctness doesn't depend on observability" contract Metrics
+// already gives a nil implementation.
+var tracer = otel.Tracer("github.com/akshantvats/prompt-fingerprinter/pkg/stack")
 
 // HardTTL is the L1 backfill's expiry. DESIGN.md §3 (Day 70) commits to
 // reading semantic-cache-engine's own freshness policy "rather than
@@ -101,13 +117,22 @@ type Stack struct {
 // backfilled into Redis before returning so the next identical prompt
 // becomes an L1 hit.
 func (s *Stack) Get(ctx context.Context, tenantID string, req fingerprint.PromptRequest) (Result, error) {
+	ctx, span := tracer.Start(ctx, "prompt_fingerprinter.stack.get",
+		trace.WithAttributes(attribute.String("tenant.id", tenantID)))
+	defer span.End()
+
 	if tenantID == "" {
-		return Result{}, fmt.Errorf("stack: tenant_id is required")
+		err := fmt.Errorf("stack: tenant_id is required")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return Result{}, err
 	}
 
 	key := fingerprint.RedisKey(tenantID, fingerprint.Fingerprint(req))
 
 	if value, found, err := s.Redis.Get(ctx, key); err == nil && found {
+		span.SetAttributes(attribute.String("cache.tier", string(TierL1)))
+		span.SetStatus(codes.Ok, "")
 		s.incL1Hit(ctx, tenantID)
 		return Result{Hit: true, Tier: TierL1, Response: value}, nil
 	}
@@ -117,13 +142,20 @@ func (s *Stack) Get(ctx context.Context, tenantID string, req fingerprint.Prompt
 
 	response, hit, err := s.L2.Get(ctx, tenantID, req)
 	if err != nil {
-		return Result{}, fmt.Errorf("stack: L2 lookup: %w", err)
+		wrapped := fmt.Errorf("stack: L2 lookup: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(codes.Error, wrapped.Error())
+		return Result{}, wrapped
 	}
 	if !hit {
+		span.SetAttributes(attribute.String("cache.tier", string(TierMiss)))
+		span.SetStatus(codes.Ok, "")
 		s.incMiss(ctx, tenantID)
 		return Result{Tier: TierMiss}, nil
 	}
 
+	span.SetAttributes(attribute.String("cache.tier", string(TierL2)))
+	span.SetStatus(codes.Ok, "")
 	s.incL2Hit(ctx, tenantID)
 	// Backfill is best-effort: the L2 response is already resolved and
 	// correct to serve, so a failed write here only costs the next

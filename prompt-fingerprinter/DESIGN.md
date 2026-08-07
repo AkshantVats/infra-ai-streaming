@@ -94,3 +94,34 @@ So: the fingerprint hit gets its own observability identity for the same reason 
 ## Out of scope (Day 70)
 
 No live Redis instance exercised in this sandbox (no Docker daemon — see §4). No runtime code, migrations, or Kafka topics added. No change to `semantic-cache-engine`'s schema or its `pgvector` lookup path — `prompt-fingerprinter` is strictly additive in front of it, sharing only the `prompt_hash` definition Day 60 already reserved. No gateway wiring — `cost-budget-enforcer/pkg/gateway`'s request path is where a future implementation day would insert the fingerprint check ahead of its existing cache/model routing, but that wiring is deferred past Day 70's design-only scope.
+
+---
+
+## 5. OpenTelemetry spans for cache tier decisions (Day 74)
+
+`pkg/stack.Stack.Get` now wraps its whole tier-resolution flow in a single `prompt_fingerprinter.stack.get` span, closing the gap between what `Metrics` already counts (§4's `IncL1Hit`/`IncL2Hit`/`IncMiss`) and what a trace viewer can see per request. The span carries a `cache.tier` attribute set to `l1`, `l2`, or `miss` — the same three-way distinction §4 argues for, now visible next to whatever spans a future gateway integration produces around this call, not just in an aggregate counter.
+
+**No SDK wiring required to stay correct.** `pkg/stack` calls `otel.Tracer(...)` at the package level and starts a span on every `Get`, but never configures a `TracerProvider` itself. `go.opentelemetry.io/otel`'s global default is a no-op provider until something — a `cmd/` binary, a test — installs a real one, so `Get`'s behavior and return values are unchanged whether or not tracing is active. This mirrors the `Metrics` interface's existing "nil is valid" contract (§goal of DESIGN.md's Redis-optionality throughout): observability is additive, never load-bearing for correctness.
+
+**Deferred to gateway wiring.** No `TracerProvider` is constructed or exported anywhere in this module — that belongs to whichever binary eventually wires `Stack` into a live request path (§ "No gateway wiring" above), the same day that would also stand up a real `RedisClient` and `L2Store` against live infra.
+
+---
+
+## 6. Week 3 preview — `model-quality-scorer` scope (Day 75+)
+
+RouteIQ's fourth module starts once `prompt-fingerprinter`'s remaining Week 2 days close it out (Day 75 ships the exact-match cache with a real hit-rate benchmark and `BENCHMARKS.md`; Day 76 adds the admin `PUT /tenants/{id}/fingerprint-rules` endpoint and emits `cache_hit_type=exact` to the LensAI Kafka topic). `model-quality-scorer` is the piece that turns RouteIQ's routing decision from cost-and-latency-only into cost-latency-*and*-quality:
+
+- **Day 77 — design.** Judge model (Haiku) scoring a rubric defined per `task_type` as a JSON schema, an async queue topology decoupling judging from the request path, a target of 200 samples/hour/tenant, and documented failure modes for a judge call that times out.
+- **Day 78 — ingestion.** A Kafka consumer on `judge-requests` batches calls to the judge model against the shared rubric template and persists raw scores plus rationale to a ClickHouse `quality_scores` table, with a DLQ for a malformed rubric.
+- **Day 79 — rollups.** Judge outputs normalize to a 0–1 scale, rolled up into 1h/24h aggregates keyed by `model_id × task_type`, wired into a Grafana panel on the LensAI dashboard, with a documented statistical noise floor so a rollup built on too few samples isn't read as a confident signal.
+- **Day 80 — RouteIQ v1.** The decision engine this whole arc has been building toward: a weighted utility `U = w_q·quality − w_c·cost − w_l·latency` with tenant-overridable weights, tie-breaking toward the cheaper model when two candidates' `U` falls within an epsilon of each other.
+
+`prompt-fingerprinter` and `model-quality-scorer` don't share code — the fingerprint cache's job ends at "was this exact prompt already answered," which has nothing to do with scoring a *novel* response's quality. What they share is the Kafka-topic-to-ClickHouse-to-LensAI-dashboard shape every RouteIQ module since Day 60 has used, and the same tenant-scoped keying discipline §2 argues for here.
+
+---
+
+## 7. Cross-links — RouteIQ arc and LensAI
+
+- [`semantic-cache-engine/DESIGN.md`](../semantic-cache-engine/DESIGN.md) — Day 60, the arc's first module and the source of the `prompt_hash` column definition this module reuses (§2).
+- [`cost-budget-enforcer/DESIGN.md`](../cost-budget-enforcer/DESIGN.md) — Day 65, the arc's second module; `pkg/lensai`'s `SourceGatewayCacheHit` is the precedent §4 follows for giving an exact-match hit its own source value rather than collapsing it into a semantic-cache hit.
+- [`../OBSERVABILITY.md`](../OBSERVABILITY.md) — root LensAI dashboard/runbook index. `prompt-fingerprinter` has no dashboard entry yet (§5's spans have no exporter wired up, and §4's `cache_hit_exact` source value is still gateway-wiring-deferred, per "Out of scope" above) — this link exists so a future day adding one starts from the existing dashboard conventions instead of inventing new ones.

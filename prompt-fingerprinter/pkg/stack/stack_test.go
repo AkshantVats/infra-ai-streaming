@@ -7,8 +7,27 @@ import (
 	"errors"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/akshantvats/prompt-fingerprinter/pkg/fingerprint"
 )
+
+// spanAttr returns the string value of attribute key on the first
+// recorded span, or "" if either is missing.
+func spanAttr(t *testing.T, spans tracetest.SpanStubs, key string) string {
+	t.Helper()
+	if len(spans) == 0 {
+		t.Fatalf("want at least one recorded span, got 0")
+	}
+	for _, kv := range spans[0].Attributes {
+		if string(kv.Key) == key {
+			return kv.Value.AsString()
+		}
+	}
+	return ""
+}
 
 func testReq() fingerprint.PromptRequest {
 	return fingerprint.PromptRequest{
@@ -149,6 +168,69 @@ func TestGet_EmptyTenantID_Errors(t *testing.T) {
 	if err == nil {
 		t.Fatalf("want error for empty tenant_id, got nil")
 	}
+}
+
+// TestGet_Span_TaggedByTier exercises DESIGN.md §4's "own
+// observability identity" claim for the span layer: an L1 hit, an L2
+// hit, and a miss must each carry a distinguishable cache.tier
+// attribute, not collapse into one undifferentiated span.
+//
+// The global TracerProvider can only be delegated once per process —
+// package.tracer was obtained (at stack.go's package-init time) from
+// the default no-op provider, and otel's global package permanently
+// binds it to whichever provider the *first* call to
+// otel.SetTracerProvider installs (see otel's internal/global,
+// tracerProvider.setDelegate: "It is guaranteed by the caller that
+// this happens only once"). So this test installs one provider for
+// the whole subtest tree and resets the shared exporter between runs,
+// rather than swapping providers per subtest.
+func TestGet_Span_TaggedByTier(t *testing.T) {
+	ctx := context.Background()
+
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+
+	run := func(t *testing.T, s *Stack, tenantID string) tracetest.SpanStubs {
+		t.Helper()
+		exporter.Reset()
+		if _, err := s.Get(ctx, tenantID, testReq()); err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		return exporter.GetSpans()
+	}
+
+	t.Run("l1_hit", func(t *testing.T) {
+		redis := NewMemRedis()
+		key := fingerprint.RedisKey("tenant-span-l1", fingerprint.Fingerprint(testReq()))
+		if err := redis.Set(ctx, key, "cached", HardTTL); err != nil {
+			t.Fatalf("seed redis: %v", err)
+		}
+		s := &Stack{Redis: redis, L2: &MemL2{}, Metrics: NewMemMetrics()}
+		spans := run(t, s, "tenant-span-l1")
+		if got := spanAttr(t, spans, "cache.tier"); got != string(TierL1) {
+			t.Fatalf("cache.tier = %q, want %q", got, TierL1)
+		}
+	})
+
+	t.Run("l2_hit", func(t *testing.T) {
+		l2 := &MemL2{Responses: map[string]string{"tenant-span-l2": "semantic response"}}
+		s := &Stack{Redis: NewMemRedis(), L2: l2, Metrics: NewMemMetrics()}
+		spans := run(t, s, "tenant-span-l2")
+		if got := spanAttr(t, spans, "cache.tier"); got != string(TierL2) {
+			t.Fatalf("cache.tier = %q, want %q", got, TierL2)
+		}
+	})
+
+	t.Run("miss", func(t *testing.T) {
+		s := &Stack{Redis: NewMemRedis(), L2: &MemL2{}, Metrics: NewMemMetrics()}
+		spans := run(t, s, "tenant-span-miss")
+		if got := spanAttr(t, spans, "cache.tier"); got != string(TierMiss) {
+			t.Fatalf("cache.tier = %q, want %q", got, TierMiss)
+		}
+	})
 }
 
 func TestGet_NilMetrics_DoesNotPanic(t *testing.T) {
