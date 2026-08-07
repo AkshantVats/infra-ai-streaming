@@ -90,6 +90,25 @@ type Metrics interface {
 	IncMiss(ctx context.Context, tenantID string)
 }
 
+// RulesProvider resolves a tenant's fingerprint normalization Rules
+// (Day 76's admin API, pkg/rules.Store). A nil Stack.Rules matches every
+// prompt-fingerprinter day before Day 76: no Rules layer runs, Normalize's
+// fixed contract is the entire normalization story — the same "optional,
+// not load-bearing for correctness" contract Metrics already uses.
+type RulesProvider interface {
+	ForTenant(ctx context.Context, tenantID string) fingerprint.Rules
+}
+
+// EventEmitter posts an L1 (exact-match) hit to LensAI (Day 76,
+// pkg/lensai.Writer.EmitExactHit). A nil Stack.Emitter means Get simply
+// doesn't emit — the same "observability is additive" contract Metrics
+// and the OTel spans in this file already follow, and a failed emit is
+// logged nowhere and never fails the request: Metrics.IncL1Hit already
+// recorded the outcome for anything that must not be lost.
+type EventEmitter interface {
+	EmitExactHit(ctx context.Context, tenantID, fingerprintKey string, latency time.Duration) error
+}
+
 // Result is the outcome of a single Stack.Get call.
 type Result struct {
 	// Hit is true if either tier resolved the request.
@@ -102,11 +121,15 @@ type Result struct {
 	Response string
 }
 
-// Stack composes the two cache tiers behind a single Get call.
+// Stack composes the two cache tiers behind a single Get call. Rules and
+// Emitter are both optional (Day 76) — nil behaves exactly as every
+// prior day's Stack did.
 type Stack struct {
 	Redis   RedisClient
 	L2      L2Store
 	Metrics Metrics
+	Rules   RulesProvider
+	Emitter EventEmitter
 }
 
 // Get runs DESIGN.md §3's lookup order: fingerprint the request,
@@ -117,6 +140,7 @@ type Stack struct {
 // backfilled into Redis before returning so the next identical prompt
 // becomes an L1 hit.
 func (s *Stack) Get(ctx context.Context, tenantID string, req fingerprint.PromptRequest) (Result, error) {
+	start := time.Now()
 	ctx, span := tracer.Start(ctx, "prompt_fingerprinter.stack.get",
 		trace.WithAttributes(attribute.String("tenant.id", tenantID)))
 	defer span.End()
@@ -128,19 +152,29 @@ func (s *Stack) Get(ctx context.Context, tenantID string, req fingerprint.Prompt
 		return Result{}, err
 	}
 
-	key := fingerprint.RedisKey(tenantID, fingerprint.Fingerprint(req))
+	// Rules (Day 76) is an additional layer in front of Normalize's fixed
+	// contract, not a replacement for it — a nil Rules or an unconfigured
+	// tenant's zero-value fingerprint.Rules{} leaves req byte-for-byte
+	// unchanged, so this is a no-op for every tenant that predates Day 76.
+	effectiveReq := req
+	if s.Rules != nil {
+		effectiveReq = s.Rules.ForTenant(ctx, tenantID).Apply(req)
+	}
+
+	key := fingerprint.RedisKey(tenantID, fingerprint.Fingerprint(effectiveReq))
 
 	if value, found, err := s.Redis.Get(ctx, key); err == nil && found {
 		span.SetAttributes(attribute.String("cache.tier", string(TierL1)))
 		span.SetStatus(codes.Ok, "")
 		s.incL1Hit(ctx, tenantID)
+		s.emitExactHit(ctx, tenantID, key, time.Since(start))
 		return Result{Hit: true, Tier: TierL1, Response: value}, nil
 	}
 	// Either an L1 miss, or a Redis error — both fail open to L2. A
 	// Redis outage degrades this stack to semantic-cache-engine's own
 	// latency, not to a hard failure of the request.
 
-	response, hit, err := s.L2.Get(ctx, tenantID, req)
+	response, hit, err := s.L2.Get(ctx, tenantID, effectiveReq)
 	if err != nil {
 		wrapped := fmt.Errorf("stack: L2 lookup: %w", err)
 		span.RecordError(wrapped)
@@ -182,5 +216,16 @@ func (s *Stack) incL2Hit(ctx context.Context, tenantID string) {
 func (s *Stack) incMiss(ctx context.Context, tenantID string) {
 	if s.Metrics != nil {
 		s.Metrics.IncMiss(ctx, tenantID)
+	}
+}
+
+// emitExactHit posts an L1 hit to LensAI (Day 76). Best-effort and
+// fire-and-forget by design, same as the L2-hit Redis backfill above:
+// Metrics.IncL1Hit already durably recorded this outcome, so a failed
+// emit costs only this event's row on the LensAI dashboard, not this
+// request's correctness.
+func (s *Stack) emitExactHit(ctx context.Context, tenantID, key string, latency time.Duration) {
+	if s.Emitter != nil {
+		_ = s.Emitter.EmitExactHit(ctx, tenantID, key, latency)
 	}
 }

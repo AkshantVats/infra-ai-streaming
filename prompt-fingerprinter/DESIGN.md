@@ -125,3 +125,59 @@ RouteIQ's fourth module starts once `prompt-fingerprinter`'s remaining Week 2 da
 - [`semantic-cache-engine/DESIGN.md`](../semantic-cache-engine/DESIGN.md) — Day 60, the arc's first module and the source of the `prompt_hash` column definition this module reuses (§2).
 - [`cost-budget-enforcer/DESIGN.md`](../cost-budget-enforcer/DESIGN.md) — Day 65, the arc's second module; `pkg/lensai`'s `SourceGatewayCacheHit` is the precedent §4 follows for giving an exact-match hit its own source value rather than collapsing it into a semantic-cache hit.
 - [`../OBSERVABILITY.md`](../OBSERVABILITY.md) — root LensAI dashboard/runbook index. `prompt-fingerprinter` has no dashboard entry yet (§5's spans have no exporter wired up, and §4's `cache_hit_exact` source value is still gateway-wiring-deferred, per "Out of scope" above) — this link exists so a future day adding one starts from the existing dashboard conventions instead of inventing new ones.
+
+---
+
+## 8. Admin API, tenant-configurable rules, and LensAI wiring (Day 76)
+
+Three gaps §6 committed to for Day 76, all closed today.
+
+**`PUT /tenants/{id}/fingerprint-rules` (`pkg/admin`).** A tenant can now configure
+`strip_punctuation`, `lowercase`, and `max_prompt_bytes` — normalization overrides layered on top
+of §1's fixed contract, not a replacement for it. `pkg/fingerprint.Rules` is the type; its zero
+value is a documented no-op (`Rules{}.Apply(req) == req`), so a tenant that has never called this
+endpoint fingerprints exactly as every tenant did on Day 70. `pkg/rules.Store` holds the
+configured value per tenant behind a `PUT`, not `cost-budget-enforcer/pkg/admin`'s `PATCH`: three
+small boolean/int fields is a resource small enough that "send the whole thing" is the simpler
+contract, and doesn't need a second pointer-field patch type only for this endpoint.
+
+**Why layering, not replacing, matters.** §1 committed to `Normalize` being "the only place this
+logic lives... two slightly-different normalizers would mean two prompts that should collide under
+one path collide under only one of them." `Rules` doesn't relax that: the base contract
+(trim, collapse, canonical JSON) still runs identically on every request from every tenant. What
+`Rules` changes is what bytes reach that contract, and it does so the same way for a given
+tenant's own requests every time — the collision guarantee still holds *within* a tenant's
+keyspace, which is the only scope it was ever a guarantee for (§2's tenant-scoped key already
+means two tenants' fingerprints were never comparable to begin with).
+
+**`Stack.Rules` and `Stack.Emitter` (`pkg/stack`).** Both new fields on `Stack`, both optional —
+nil behaves exactly as every pre-Day-76 `Stack` did, the same "additive, not load-bearing"
+contract `Metrics` already established. When `Rules` is set, `Get` applies the tenant's rules
+before fingerprinting; when `Emitter` is set, an L1 hit posts a `cache_hit_exact` event
+best-effort, mirroring the L2-hit Redis backfill's own "already durably recorded via `Metrics`,
+so a failed side-effect costs only this one signal, not correctness" reasoning.
+
+**`cache_hit_type=exact` reaches LensAI (`pkg/lensai`).** `SourceCacheHitExact = "cache_hit_exact"`
+was reserved in §4 on Day 70 and never had a writer until today. `pkg/lensai.Writer` mirrors
+`cost-budget-enforcer/pkg/lensai`'s `Writer`/`Event` shape exactly — the same `/ingest` HTTP
+envelope every Go producer in this repo posts through, which is what actually reaches LensAI's
+Kafka topic on the Rust ingestion side. No direct Kafka client in this module, same as every
+sibling `pkg/lensai`.
+
+**Integration test.** `pkg/stack/integration_test.go`'s
+`TestIntegration_DuplicatePromptSkipsEmbeddingAPI` sends an identical prompt twice through `Stack`
+with a call-counting `L2Store` fake standing in for the embedding API, and asserts exactly one
+call — the concrete proof of this module's entire reason to exist. A second test,
+`TestIntegration_AdminRulesExpandDuplicateDetection`, wires `pkg/admin.Handler` behind an
+`httptest.Server`, `PUT`s rules for a tenant, and shows two prompts differing only in case and
+punctuation — which would split across a miss-then-hit under the Day 70 default — now both
+resolve at L1 once the tenant opts in.
+
+**Out of scope.** No audit trail for a `Rules` change — `cost-budget-enforcer/pkg/audit`'s
+publish-or-rollback contract is specific to budget changes with real financial consequences; a
+normalization-rule change has no equivalent "roll back the money" case, and if one is needed
+later it should reuse that package rather than fork a second one. No live Redis, Postgres, or
+Kafka broker exercised (no Docker daemon, the same constraint every prior day here has logged) —
+`pkg/admin` and `pkg/lensai` are both tested against `httptest.Server` fakes. No gateway wiring,
+same note §3 has carried since Day 70.
+
