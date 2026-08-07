@@ -197,9 +197,9 @@ for how RouteIQ relates to TraceForge and the rest of the stack):
 | `agent-replay-engine/` | Deterministic replay/diff of recorded agent runs | `traceforge replay`, `traceforge diff` CLI |
 | `agent-benchmark-runner/` | Task-YAML benchmark runner, N repetitions, two-agent comparison | `traceforge run` CLI |
 | `tool-call-analyzer/` | Tool-call dependency graph + LensAI cost dual-write | `traceforge graph`, `traceforge dual-write` CLI |
-| `semantic-cache-engine/` | RouteIQ's embedding-similarity response cache, dual-writes `source='cache_hit'` to LensAI | **Design-only** — see [`semantic-cache-engine/DESIGN.md`](semantic-cache-engine/DESIGN.md), no runtime yet |
-| `cost-budget-enforcer/` | RouteIQ's per-tenant sliding-window token budget — soft-limit routes to a cheaper model, hard-limit rejects | **Design-only** — see [`cost-budget-enforcer/DESIGN.md`](cost-budget-enforcer/DESIGN.md), no runtime yet |
-| `prompt-fingerprinter/` | RouteIQ's exact-match SHA-256 cache, checked ahead of `semantic-cache-engine`'s embedding lookup | **Design-only** — see [`prompt-fingerprinter/DESIGN.md`](prompt-fingerprinter/DESIGN.md), no runtime yet |
+| `semantic-cache-engine/` | RouteIQ's embedding-similarity response cache, dual-writes `source='cache_hit'` to LensAI | Go runtime — `pkg/lookup`, `pkg/cachestore`, `pkg/embedder` |
+| `cost-budget-enforcer/` | RouteIQ's per-tenant sliding-window token budget — soft-limit routes to a cheaper model, hard-limit rejects | Go runtime — `pkg/enforcer`, `pkg/middleware`, `pkg/admin` |
+| `prompt-fingerprinter/` | RouteIQ's exact-match SHA-256 cache (L1), fronting `semantic-cache-engine`'s embedding lookup (L2) — see [Cache stack](#cache-stack) | Go runtime — `pkg/fingerprint`, `pkg/stack` |
 
 Buyers install a compose file, not four `git clone`s. `docker-compose.yml`
 at the repo root brings up all four together, plus the shared Redpanda /
@@ -216,6 +216,66 @@ docker compose --profile tools run --rm analyzer graph --log <path> --trace-id <
 
 docker compose down -v
 ```
+
+---
+
+## Cache stack
+
+RouteIQ's response cache is two tiers, not one — `prompt-fingerprinter`'s `pkg/stack.Stack`
+composes both behind a single `Get` call:
+
+```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'primaryColor': '#1e3a5f',
+    'primaryTextColor': '#f0f4f8',
+    'primaryBorderColor': '#4a90d9',
+    'lineColor': '#4a90d9',
+    'secondaryColor': '#0d2137',
+    'tertiaryColor': '#0a1a2e',
+    'background': 'transparent',
+    'nodeBorder': '#4a90d9',
+    'clusterBkg': '#0d2137',
+    'titleColor': '#f0f4f8',
+    'edgeLabelBackground': '#0d2137'
+  }
+}}%%
+flowchart LR
+  req["Inbound prompt"] --> l1["L1 Redis GET"]
+  l1 -->|"hit"| servel1["Serve, count l1_hit"]
+  l1 -->|"miss or error"| l2["L2 semantic-cache-engine"]
+  l2 -->|"hit"| backfill["Backfill L1, count l2_hit"]
+  l2 -->|"miss"| infer["Pass through, count miss"]
+```
+
+- **L1 — exact Redis.** `pkg/fingerprint.Fingerprint()` hashes the normalized request; a Redis
+  `GET` on that key is the fast path. A Redis error fails open to L2 rather than failing the
+  request, the same choice `cost-budget-enforcer/pkg/middleware` makes for its own Redis
+  dependency.
+- **L2 — semantic pgvector.** On an L1 miss, the request falls through to `semantic-cache-
+  engine`'s embedding-similarity lookup (`pkg/lookup.Lookup` in that module). `Stack` depends on
+  this tier only through its own `L2Store` interface, not a direct import — the two remain
+  separate Go modules with no shared `go.work`, and a concrete adapter is a future gateway-
+  wiring day's work.
+- **Backfill.** An L2 hit is written back into Redis before returning, so the next
+  byte-identical repeat of the same prompt resolves at L1 instead of paying the embedding cost
+  again.
+- **Metrics.** Every `Get` call increments exactly one of three counters — `l1_hit`, `l2_hit`,
+  `miss` — via the `Metrics` interface, so a cache stack's health is answerable as "which tier
+  did the work," not just a single blended hit rate.
+
+**L1 TTL and the collision drill.** Every L1 backfill carries `stack.HardTTL` (30 days) — the
+same hard ceiling `semantic-cache-engine/DESIGN.md` §6 already commits to, not a second policy
+invented for this module (`prompt-fingerprinter/DESIGN.md` §3 says as much explicitly). A SHA-256
+fingerprint collision is cryptographically implausible, but `pkg/stack/collision_test.go` runs a
+drill anyway: it seeds `MemRedis` at the exact key a collision would produce and confirms two
+things independently contain the blast radius rather than one thing preventing it outright —
+tenant scoping (`RedisKey` folds `tenant_id` into the key, so a collision under one tenant can
+never read back under another) and the TTL (a `FakeClock` advances past `HardTTL` and confirms
+the corrupted entry expires and self-heals via a fresh L2 lookup, with no operator intervention).
+Neither mechanism detects a collision when it happens — an exact-match cache keyed by hash alone
+has no way to — so both exist to bound how much damage one could do if it ever did.
 
 ---
 
