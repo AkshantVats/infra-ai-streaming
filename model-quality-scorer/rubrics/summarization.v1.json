@@ -1,0 +1,21 @@
+{
+  "task_type": "summarization",
+  "version": 1,
+  "criteria": [
+    {
+      "name": "factual_grounding",
+      "weight": 0.5,
+      "description": "Does every claim in the summary trace back to something actually stated in the source, with no invented facts, numbers, or attributions?"
+    },
+    {
+      "name": "coverage",
+      "weight": 0.3,
+      "description": "Does the summary include the source's key points, not just the first paragraph or the most quotable line?"
+    },
+    {
+      "name": "conciseness",
+      "weight": 0.2,
+      "description": "Is the summary meaningfully shorter than the source while still standing on its own without the source open?"
+    }
+  ]
+}

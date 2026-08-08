@@ -189,8 +189,8 @@ TraceForge is four components living in this monorepo, each with its own
 Go module and its own `traceforge` CLI or service binary. RouteIQ, the arc
 opened on Day 60, adds four more rows below: `semantic-cache-engine`,
 `cost-budget-enforcer`, `prompt-fingerprinter`, and `model-quality-scorer`
-is design-only for now (see [Platform](#platform) for how RouteIQ relates
-to TraceForge and the rest of the stack):
+(see [Platform](#platform) for how RouteIQ relates to TraceForge and the
+rest of the stack):
 
 | Component | What it is | Interface |
 |---|---|---|
@@ -201,7 +201,7 @@ to TraceForge and the rest of the stack):
 | `semantic-cache-engine/` | RouteIQ's embedding-similarity response cache, dual-writes `source='cache_hit'` to LensAI | Go runtime — `pkg/lookup`, `pkg/cachestore`, `pkg/embedder` |
 | `cost-budget-enforcer/` | RouteIQ's per-tenant sliding-window token budget — soft-limit routes to a cheaper model, hard-limit rejects | Go runtime — `pkg/enforcer`, `pkg/middleware`, `pkg/admin` |
 | `prompt-fingerprinter/` | RouteIQ's exact-match SHA-256 cache (L1), fronting `semantic-cache-engine`'s embedding lookup (L2) — see [Cache stack](#cache-stack) | Go runtime — `pkg/fingerprint`, `pkg/stack` |
-| `model-quality-scorer/` | RouteIQ's LLM-as-judge sampler — Haiku grades sampled responses against a per-task-type rubric, scored per tenant x task | **Design-only** — see [`model-quality-scorer/DESIGN.md`](model-quality-scorer/DESIGN.md), no runtime yet |
+| `model-quality-scorer/` | RouteIQ's Haiku-judged response quality sampler — batched Kafka consumer scores against a shared rubric, persists to `quality_scores` | Go runtime — `pkg/judge`, `pkg/consumer`, `pkg/store` |
 
 Buyers install a compose file, not four `git clone`s. `docker-compose.yml`
 at the repo root brings up all four together, plus the shared Redpanda /
