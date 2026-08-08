@@ -153,6 +153,53 @@ and both exist because a rollup that's silently wrong (mixed units) or silently 
 
 ---
 
+## 8. RouteIQ's decision — scalarization joins quality, cost, and latency (Day 80)
+
+Every module before today answers one question about a request in isolation: was it in cache
+(`semantic-cache-engine`), was it under budget (`cost-budget-enforcer`), did it exact-match a
+known prompt (`prompt-fingerprinter`), was the response actually good (`model-quality-scorer`
+§1-§7). None of them pick a model. `pkg/decision` is the arc's first module that does: it turns
+`model-quality-scorer`'s own quality signal plus two externally-supplied signals (cost, latency)
+into one routing decision.
+
+**Linear scalarization, not a constrained search.** `Utility(c, w) = w.WQuality*c.Quality -
+w.WCost*c.CostPerCall - w.WLatency*c.LatencyP99Ms` reduces three incomparable units — a quality
+fraction, a dollar amount, a millisecond count — into one ranked scalar, the same technique a
+cost-aware load balancer uses to score backends on free capacity minus $/request. This is a
+deliberate, named limitation, not an oversight: a weighted sum can express smooth tradeoffs across
+all three axes, but it cannot express a hard constraint ("quality above 0.8, no matter the cost").
+RouteIQ does not need that yet — §6's per-tenant×task_type quality signal and this scalarized
+utility are enough to justify a routing choice by quality alongside cost and latency, which is the
+whole point this document's opening paragraph named as the gap every prior module left open:
+"was the response actually *good*."
+
+**Weights are tenant-overridable, not a global constant.** `WeightsForTenant` looks up a
+`RoutingWeights` override keyed by tenant, falling back to `DefaultWeights` — the same
+override-map-keyed-by-tenant-id shape `cost-budget-enforcer`'s budget config and
+`prompt-fingerprinter`'s cache config already use. How much latency should matter relative to cost
+is a legitimate per-tenant preference (a real-time support tenant vs. a batch-report tenant), not
+something this module should decide once for everyone.
+
+**The tie-break matters because scalarization can produce genuine near-ties.** Two candidates that
+are, within the weights given, practically indistinguishable are common, not an edge case —
+`Decide` treats any candidate within `tieEpsilon` of the top utility as tied and prefers the
+cheaper one, falling back to `ModelID` order only if cost also ties exactly. This keeps `Decide`
+fully deterministic: the same candidate set and weights always produce the same winner, never an
+unstable pick that could flap between two backends on repeated calls.
+
+**`Decision.LowConfidence` carries the noise floor forward, it does not act on it.** A winning
+candidate built from a rollup bucket below NOISE-FLOOR.md's 30-sample floor (§7) still wins if its
+utility is highest — `pkg/decision` doesn't second-guess `pkg/rollup`'s own data, it surfaces the
+flag so a caller (a future alerting day, or a human reviewing a routing regression) knows the
+decision's quality input wasn't fully earned yet, the same way `Row.LowConfidence()` surfaces it
+for the raw rollup rather than excluding thin buckets outright.
+
+So: `pkg/decision` is where the four RouteIQ modules built since Day 60 finally combine into an
+actual choice — and it says so honestly about what a weighted sum can and can't express, rather
+than presenting scalarization as more powerful than it is.
+
+---
+
 ## Out of scope (Day 77)
 
 No runtime code, migrations, or Kafka topics actually created yet — `judge-requests` and `judge-requests-dlq` are named here as the design commitment a future implementation day stands up. No live Haiku calls exercised in this sandbox. No wiring into `cost-budget-enforcer`'s gateway or `semantic-cache-engine`'s lookup path to trigger the sampling decision — that integration point is deferred past this design-only day, the same way `prompt-fingerprinter`'s Day 70 design deferred its own gateway wiring. Implementation lands across three following days: the Kafka consumer, batched judge calls, and ClickHouse persistence this document commits to; 1h/24h rollup normalization with a documented statistical noise floor; and RouteIQ's weighted utility function that finally consumes the rollup alongside cost and latency.
@@ -166,3 +213,12 @@ verified directly against fixture stats. No RouteIQ weighted-utility integration
 80, once cost and latency signals join quality in one function. No Grafana alerting rule on the
 low-confidence flag — the panel surfaces it visually; an actual alert is a later operational
 concern.
+
+## Out of scope (Day 80)
+
+No live cost or latency data source wired in — `FromRollupRow` takes both as caller-supplied
+arguments; a future day sources real per-model pricing and `cost-budget-enforcer`/OTel latency
+observability instead of test fixtures. No gateway integration — `Decide` is a pure function; the
+live request path does not yet call it to actually pick a model. No live ClickHouse query behind
+the `rollup.Row` values `pkg/decision`'s tests use — same standing sandbox constraint (no Docker
+daemon); verified against fixture rows.
