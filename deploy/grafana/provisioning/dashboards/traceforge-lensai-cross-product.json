@@ -127,6 +127,49 @@
       ],
       "title": "Recent benchmark batches (source = benchmark_run)",
       "type": "table"
+    },
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "description": "1h rollup of model-quality-scorer's normalized_score (0-1, score/100 — comparable across rubrics with different weight distributions) per model_id x task_type, per pkg/rollup.Query(Window1h). sample_count below 30 (pkg/rollup.MinSamplesForConfidence, see model-quality-scorer/NOISE-FLOOR.md) is the statistical noise floor — a bucket below it is flagged low-confidence rather than shown at the same weight as a fully-sampled hour.",
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "sample_count" },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "green", "value": 30 }
+                  ]
+                }
+              },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "id": 5,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT\n  toStartOfHour(scored_at) AS window,\n  model_id,\n  task_type,\n  count() AS sample_count,\n  avg(normalized_score) AS avg_normalized_score,\n  stddevPop(normalized_score) AS stddev_normalized_score\nFROM infra_ai.quality_scores\nWHERE $__timeFilter(scored_at)\nGROUP BY window, model_id, task_type\nORDER BY window DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Model quality — 1h rollup, normalized score (sample_count < 30 = low confidence)",
+      "type": "table"
     }
   ],
   "refresh": "10s",
