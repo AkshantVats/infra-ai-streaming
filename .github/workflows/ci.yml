@@ -111,6 +111,17 @@ jobs:
       - name: Go test (prompt-fingerprinter)
         run: cd prompt-fingerprinter && go test -race ./...
 
+      - name: gofmt (check, model-quality-scorer)
+        run: |
+          cd model-quality-scorer
+          test -z "$(gofmt -l .)"
+
+      - name: Go vet (model-quality-scorer)
+        run: cd model-quality-scorer && go vet ./...
+
+      - name: Go test (model-quality-scorer)
+        run: cd model-quality-scorer && go test -race ./...
+
   # ── docker-compose config validation ─────────────────────────────────────
   # Root docker-compose.yml unifies traceforge, agent-replay-engine,
   # agent-benchmark-runner, and tool-call-analyzer into one stack (Day 56).
