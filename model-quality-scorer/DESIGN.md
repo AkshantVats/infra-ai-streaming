@@ -73,16 +73,16 @@ So: the rubric is the fixed, reviewable yardstick; only the traffic being measur
 }}%%
 flowchart LR
   req["Live request served"] --> sample["Sampling decision"]
-  sample --> topic["Kafka judge.samples"]
+  sample --> topic["Kafka judge-requests"]
   topic --> worker["Judge worker pool"]
   worker --> haiku["Haiku scores rubric"]
-  haiku --> store["Score store, tenant x task"]
+  haiku --> store["ClickHouse quality_scores"]
   worker -->|"timeout"| dlq["DLQ, judge_unavailable"]
 ```
 
 **The judge sits entirely outside the request/response cycle.** A request that gets sampled for judging has already been served — cache lookup, budget check, and the model call all completed before `model-quality-scorer` ever sees it. This mirrors why `prompt-fingerprinter`'s exact-match check and `cost-budget-enforcer`'s budget check both run inline while anything slower runs after: judging necessarily costs more than a Redis round trip (it's a full model call), so it belongs on the far side of the response already having gone out, never in front of it.
 
-**Kafka, not Redis, because this is a durable log a consumer group drains at its own pace, not hot-path state a single caller blocks on.** `judge.samples` follows the same partition-by-`tenant_id` strategy the root `DESIGN.md` §3 already establishes for the ingestion topic — one tenant's judge backlog can never head-of-line block another tenant's, and a worker pool scales by adding consumers within the group rather than by any change to how samples are produced.
+**Kafka, not Redis, because this is a durable log a consumer group drains at its own pace, not hot-path state a single caller blocks on.** `judge-requests` follows the same partition-by-`tenant_id` strategy the root `DESIGN.md` §3 already establishes for the ingestion topic — one tenant's judge backlog can never head-of-line block another tenant's, and a worker pool scales by adding consumers within the group rather than by any change to how samples are produced.
 
 So: sampling adds a fire-and-forget publish to an already-completed request, and everything after that publish is the judge pipeline's problem, not the gateway's.
 
@@ -109,8 +109,8 @@ So: the target is stated as an absolute rate precisely so it means the same thin
 A judge call has a fixed timeout (design commitment: 5s, generous relative to Haiku's typical latency but bounded so one slow call can't stall a worker indefinitely). On timeout:
 
 1. **One bounded retry**, not a loop. A single retry absorbs a transient blip; retrying repeatedly on a genuinely down judge would just grow the backlog faster than the queue drains, the same "no unbounded retry loop" discipline this repo already treats as a hard rule elsewhere.
-2. **Second timeout → dead-letter, not a fabricated score.** The sample is written to `judge.samples.dlq` tagged `judge_unavailable` and dropped from the request path entirely — a failed grading attempt is not a `0` and not silently skipped; it is a distinct outcome the aggregation layer (§6) has to know how to exclude explicitly, the same way `cost-budget-enforcer`'s Redis-outage design (Day 69 §7) treats "the dependency is down" as its own state rather than approximating it as a pass or a fail.
-3. **Circuit breaker on sustained failure.** If the judge's failure rate over a trailing window crosses a threshold (design commitment: >10% of attempts in 5 minutes), the worker pool stops pulling new samples for the affected `task_type` until the judge recovers, rather than letting `judge.samples` grow unbounded behind a judge that is provably not answering. This follows `cost-budget-enforcer`'s fail-open-by-default posture (Day 69 §7): quality sampling pausing briefly costs nothing user-facing, since it sits entirely outside the request path already served.
+2. **Second timeout → dead-letter, not a fabricated score.** The sample is written to `judge-requests-dlq` tagged `judge_unavailable` and dropped from the request path entirely — a failed grading attempt is not a `0` and not silently skipped; it is a distinct outcome the aggregation layer (§6) has to know how to exclude explicitly, the same way `cost-budget-enforcer`'s Redis-outage design (Day 69 §7) treats "the dependency is down" as its own state rather than approximating it as a pass or a fail.
+3. **Circuit breaker on sustained failure.** If the judge's failure rate over a trailing window crosses a threshold (design commitment: >10% of attempts in 5 minutes), the worker pool stops pulling new samples for the affected `task_type` until the judge recovers, rather than letting `judge-requests` grow unbounded behind a judge that is provably not answering. This follows `cost-budget-enforcer`'s fail-open-by-default posture (Day 69 §7): quality sampling pausing briefly costs nothing user-facing, since it sits entirely outside the request path already served.
 
 **A `judge_unavailable` sample must never be averaged in as a passing or failing score.** The whole point of §6's per-tenant×task_type aggregation is that a number reported as "average quality" has to mean every input to it was actually graded — folding a timeout in as an implicit zero would make an outage look like a quality regression, and dropping it silently would hide that coverage for that hour was lower than the 200/hr target promised.
 
@@ -118,7 +118,7 @@ A judge call has a fixed timeout (design commitment: 5s, generous relative to Ha
 
 ## 6. Aggregation — per tenant × task_type, never a single global average
 
-Scores are stored per sample (`tenant_id`, `task_type`, `model_id`, `rubric_version`, `score`), and aggregates are computed at query time by slicing along whichever of those dimensions the question needs — never pre-collapsed into one running global average at write time. A single blended number across every tenant and every task type would hide exactly the failure this module exists to catch: one tenant's routing regression on one task type, diluted into invisibility by every other tenant's unaffected traffic averaging over it.
+Scores land in a ClickHouse `quality_scores` table, one row per judged sample (`tenant_id`, `task_type`, `model_id`, `rubric_version`, `score`, `rationale`) — `rationale` is the judge's short free-text justification for the score, not just the number, so a low-scoring sample is debuggable after the fact instead of a bare integer nobody can act on. Aggregates are computed at query time by slicing along whichever of those columns the question needs — never pre-collapsed into one running global average at write time. A single blended number across every tenant and every task type would hide exactly the failure this module exists to catch: one tenant's routing regression on one task type, diluted into invisibility by every other tenant's unaffected traffic averaging over it.
 
 This is the same shape as a lesson that shows up outside this codebase entirely: a P99 latency figure computed by averaging pre-merged per-tenant percentiles is not a real P99 for any tenant — it's a number that describes nobody's actual experience, because percentiles (and, here, quality scores) don't merge losslessly across a dimension you might later need to slice by. The fix is identical in both places: keep the raw, dimension-scoped data (per-sample scores here, per-tenant distributions there) and aggregate only at the point where the slicing dimension is already decided, not before.
 
@@ -128,4 +128,4 @@ So: `model-quality-scorer` never produces "the" quality score — only "the scor
 
 ## Out of scope (Day 77)
 
-No runtime code, migrations, or Kafka topics actually created yet — `judge.samples` and `judge.samples.dlq` are named here as the design commitment a future implementation day stands up. No live Haiku calls exercised in this sandbox. No wiring into `cost-budget-enforcer`'s gateway or `semantic-cache-engine`'s lookup path to trigger the sampling decision — that integration point is deferred past this design-only day, the same way `prompt-fingerprinter`'s Day 70 design deferred its own gateway wiring.
+No runtime code, migrations, or Kafka topics actually created yet — `judge-requests` and `judge-requests-dlq` are named here as the design commitment a future implementation day stands up. No live Haiku calls exercised in this sandbox. No wiring into `cost-budget-enforcer`'s gateway or `semantic-cache-engine`'s lookup path to trigger the sampling decision — that integration point is deferred past this design-only day, the same way `prompt-fingerprinter`'s Day 70 design deferred its own gateway wiring. Implementation lands across three following days: the Kafka consumer, batched judge calls, and ClickHouse persistence this document commits to; 1h/24h rollup normalization with a documented statistical noise floor; and RouteIQ's weighted utility function that finally consumes the rollup alongside cost and latency.
