@@ -14,13 +14,14 @@ import (
 
 // ScoredSample is one row of quality_scores.
 type ScoredSample struct {
-	TenantID      string
-	TaskType      string
-	ModelID       string
-	RubricVersion int
-	Score         float64 // 0-100, normalized (rubric.WeightedScore's output)
-	Rationale     string
-	ScoredAt      time.Time
+	TenantID        string
+	TaskType        string
+	ModelID         string
+	RubricVersion   int
+	Score           float64 // 0-100, weighted (rubric.WeightedScore's output)
+	NormalizedScore float64 // 0-1, Score/100 (normalize.Score's output) — the comparable unit across rubrics with different criteria counts and weights
+	Rationale       string
+	ScoredAt        time.Time
 }
 
 // Writer persists a batch of scored samples. Implementations must
@@ -41,6 +42,9 @@ func (s ScoredSample) Validate() error {
 	}
 	if s.Score < 0 || s.Score > 100 {
 		return fmt.Errorf("store: score %v out of range [0,100]", s.Score)
+	}
+	if s.NormalizedScore < 0 || s.NormalizedScore > 1 {
+		return fmt.Errorf("store: normalized_score %v out of range [0,1]", s.NormalizedScore)
 	}
 	if s.ScoredAt.IsZero() {
 		return fmt.Errorf("store: scored_at is zero")

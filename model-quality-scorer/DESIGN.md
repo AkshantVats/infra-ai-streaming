@@ -126,6 +126,43 @@ So: `model-quality-scorer` never produces "the" quality score — only "the scor
 
 ---
 
+## 7. Normalization and rollups (Day 79)
+
+`score` (0-100, `rubric.WeightedScore`'s output) is the right unit for a human reading `rationale`
+next to it, but it's the wrong unit for averaging across a `model_id×task_type` boundary that mixes
+rubrics with different criteria counts and weight distributions — two rubrics both output 0-100,
+but by structurally different weighted sums. `pkg/normalize.Score` converts `score` into
+`normalized_score` (0-1, `score/100`), the comparable unit §6's `pkg/rollup.Query` actually
+aggregates. Both columns are stored per row (`004_quality_scores_normalized_score.sql`) — this is
+additive, not a violation of §6's "never pre-collapsed at write time" commitment, since a per-row
+column is still one fact per judged sample, not an aggregate.
+
+`pkg/rollup.Query(Window1h | Window24h)` returns the parameterized SQL for a `(window, model_id,
+task_type)` rollup, honoring §6's query-time-only aggregation: there is no rollup table and no
+materialized view, only SQL a caller runs on demand. A rollup's mean is only as trustworthy as its
+sample count — [`NOISE-FLOOR.md`](NOISE-FLOOR.md) documents the 30-sample statistical noise floor
+(`pkg/rollup.MinSamplesForConfidence`) and the standard-error calculation
+(`pkg/rollup.StandardError`) a caller uses to decide whether to trust a bucket's mean or fall back
+to a wider window. `dashboards/traceforge-lensai-cross-product.json` panel 5 renders the 1h rollup
+with that same floor flagged visually.
+
+So: normalization solves "which unit is comparable," and the noise floor solves the question
+normalization alone doesn't answer — "how much should this particular bucket's mean be trusted" —
+and both exist because a rollup that's silently wrong (mixed units) or silently over-confident
+(too few samples) is worse than a rollup that's visibly limited.
+
+---
+
 ## Out of scope (Day 77)
 
 No runtime code, migrations, or Kafka topics actually created yet — `judge-requests` and `judge-requests-dlq` are named here as the design commitment a future implementation day stands up. No live Haiku calls exercised in this sandbox. No wiring into `cost-budget-enforcer`'s gateway or `semantic-cache-engine`'s lookup path to trigger the sampling decision — that integration point is deferred past this design-only day, the same way `prompt-fingerprinter`'s Day 70 design deferred its own gateway wiring. Implementation lands across three following days: the Kafka consumer, batched judge calls, and ClickHouse persistence this document commits to; 1h/24h rollup normalization with a documented statistical noise floor; and RouteIQ's weighted utility function that finally consumes the rollup alongside cost and latency.
+
+## Out of scope (Day 79)
+
+No live ClickHouse query actually executed against the rollup SQL (no Docker daemon, the standing
+sandbox constraint every prior RouteIQ module has logged) — `pkg/rollup.Query` is verified by
+asserting the generated SQL text, and the noise-floor math (`StandardError`, `LowConfidence`) is
+verified directly against fixture stats. No RouteIQ weighted-utility integration — deferred to Day
+80, once cost and latency signals join quality in one function. No Grafana alerting rule on the
+low-confidence flag — the panel surfaces it visually; an actual alert is a later operational
+concern.

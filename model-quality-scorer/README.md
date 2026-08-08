@@ -2,7 +2,7 @@
 
 `model-quality-scorer` is RouteIQ's fourth module: it samples live traffic, asks a cheap judge model (Claude Haiku) to grade the response against a versioned rubric, and stores the score so a routing decision can eventually be justified by quality, not just cost and latency. Full design — the judge model choice, the `JudgeRubric` schema, the async queue topology, the 200 samples/hr/tenant throughput target, and the judge-timeout failure modes — is in [`DESIGN.md`](DESIGN.md).
 
-**Status: Day 77 shipped the design. Day 78 implements the pipeline it committed to — `pkg/rubric`'s versioned, weighted rubric contract, `pkg/judge`'s timeout/retry/circuit-breaker judge call, `pkg/consumer`'s batched Kafka consumer, and `pkg/store`'s batched ClickHouse writer for `quality_scores`. A malformed rubric, a malformed message, and an unavailable judge all route to the DLQ with a distinct reason rather than becoming a fabricated score (DESIGN.md §5).**
+**Status: Day 77 shipped the design. Day 78 implements the pipeline it committed to — `pkg/rubric`'s versioned, weighted rubric contract, `pkg/judge`'s timeout/retry/circuit-breaker judge call, `pkg/consumer`'s batched Kafka consumer, and `pkg/store`'s batched ClickHouse writer for `quality_scores`. A malformed rubric, a malformed message, and an unavailable judge all route to the DLQ with a distinct reason rather than becoming a fabricated score (DESIGN.md §5). Day 79 adds `pkg/normalize` (0-1 comparable unit alongside the raw 0-100 score) and `pkg/rollup` (query-time 1h/24h aggregation SQL plus the statistical noise floor documented in [`NOISE-FLOOR.md`](NOISE-FLOOR.md)) — see DESIGN.md §7.**
 
 ## Quickstart
 

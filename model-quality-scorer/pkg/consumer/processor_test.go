@@ -106,6 +106,9 @@ func TestProcessBatch_scoresAndWrites(t *testing.T) {
 	if row.TenantID != "tenant-a" || row.Score != 80 { // 0.6*100 + 0.4*50 = 80
 		t.Fatalf("unexpected row: %+v", row)
 	}
+	if row.NormalizedScore != 0.8 { // Score/100
+		t.Fatalf("unexpected normalized score: %+v", row)
+	}
 }
 
 func TestProcessBatch_malformedMessageGoesToDLQ(t *testing.T) {

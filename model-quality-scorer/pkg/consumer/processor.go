@@ -16,6 +16,7 @@ import (
 
 	"github.com/akshantvats/model-quality-scorer/pkg/dlq"
 	"github.com/akshantvats/model-quality-scorer/pkg/judge"
+	"github.com/akshantvats/model-quality-scorer/pkg/normalize"
 	"github.com/akshantvats/model-quality-scorer/pkg/rubric"
 	"github.com/akshantvats/model-quality-scorer/pkg/store"
 )
@@ -140,13 +141,23 @@ func (p *Processor) processOne(ctx context.Context, raw []byte) (*store.ScoredSa
 		return nil, &dlq.Entry{Reason: dlq.ReasonJudgeUnavailable, Detail: err.Error(), Payload: raw}
 	}
 
+	normalizedScore, err := normalize.Score(score)
+	if err != nil {
+		// Only reachable if WeightedScore's own [0,100] contract broke —
+		// the same "judge produced something we can't trust" failure as
+		// the WeightedScore error above, so it dead-letters the same way
+		// rather than inventing a new DLQ reason for it.
+		return nil, &dlq.Entry{Reason: dlq.ReasonJudgeUnavailable, Detail: err.Error(), Payload: raw}
+	}
+
 	return &store.ScoredSample{
-		TenantID:      msg.TenantID,
-		TaskType:      msg.TaskType,
-		ModelID:       msg.ModelID,
-		RubricVersion: msg.RubricVersion,
-		Score:         score,
-		Rationale:     result.Rationale,
-		ScoredAt:      p.now(),
+		TenantID:        msg.TenantID,
+		TaskType:        msg.TaskType,
+		ModelID:         msg.ModelID,
+		RubricVersion:   msg.RubricVersion,
+		Score:           score,
+		NormalizedScore: normalizedScore,
+		Rationale:       result.Rationale,
+		ScoredAt:        p.now(),
 	}, nil
 }

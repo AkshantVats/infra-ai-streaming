@@ -10,7 +10,7 @@ import (
 )
 
 const insertSQL = `INSERT INTO infra_ai.quality_scores (
-	tenant_id, task_type, model_id, rubric_version, score, rationale, scored_at
+	tenant_id, task_type, model_id, rubric_version, score, normalized_score, rationale, scored_at
 ) VALUES`
 
 // ClickHouseWriter is the production Writer, backed by a live ClickHouse
@@ -51,7 +51,7 @@ func (w *ClickHouseWriter) WriteBatch(ctx context.Context, rows []ScoredSample) 
 		if err := r.Validate(); err != nil {
 			return fmt.Errorf("store: invalid row for tenant %s: %w", r.TenantID, err)
 		}
-		if err := batch.Append(r.TenantID, r.TaskType, r.ModelID, r.RubricVersion, r.Score, r.Rationale, r.ScoredAt); err != nil {
+		if err := batch.Append(r.TenantID, r.TaskType, r.ModelID, r.RubricVersion, r.Score, r.NormalizedScore, r.Rationale, r.ScoredAt); err != nil {
 			return fmt.Errorf("store: append row for tenant %s: %w", r.TenantID, err)
 		}
 	}
