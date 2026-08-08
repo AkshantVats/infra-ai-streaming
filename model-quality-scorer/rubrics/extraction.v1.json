@@ -1,0 +1,21 @@
+{
+  "task_type": "extraction",
+  "version": 1,
+  "criteria": [
+    {
+      "name": "schema_conformance",
+      "weight": 0.4,
+      "description": "Does the extracted output match the requested field names and types exactly, with no missing required fields or invented extra ones?"
+    },
+    {
+      "name": "value_accuracy",
+      "weight": 0.5,
+      "description": "Does every extracted value match what the source text actually says, character-for-character where the source is exact (dates, IDs, amounts)?"
+    },
+    {
+      "name": "null_handling",
+      "weight": 0.1,
+      "description": "When a field genuinely isn't present in the source, is it left null or omitted rather than filled with a guessed or hallucinated value?"
+    }
+  ]
+}
